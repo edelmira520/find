@@ -9,9 +9,6 @@ from collections import Counter, defaultdict
 from datetime import date
 from pathlib import Path
 
-from openpyxl import load_workbook
-
-
 SHEET_NAME = "樊登读书APP每周书籍"
 TITLE_COL = 3
 COVER_COLUMNS = {
@@ -73,6 +70,9 @@ def write_image(image, output_path):
 
 def resolve_actual_version(book):
     covers = book["covers"]
+    preferred = book.get("preferredVersion", "auto")
+    if preferred in ["custom", "original", "fallback"]:
+        return preferred if covers[preferred]["flat"] else "noCover"
     if covers["custom"]["flat"]:
         return "custom"
     if covers["original"]["flat"]:
@@ -88,7 +88,7 @@ def rel_img(path):
     return path.replace("\\", "/")
 
 
-def preview_card(book):
+def preview_card(book, duplicate_titles):
     actual = resolve_actual_version(book)
     covers = book["covers"]
     cells = []
@@ -105,11 +105,19 @@ def preview_card(book):
             img = '<div class="missing">缺失</div>'
         cells.append(f"<div class='cover-cell'><div class='label'>{html.escape(label)}</div>{img}</div>")
 
+    duplicate = book["title"] in duplicate_titles
+    duplicate_badge = '<strong class="dup-badge">重复书名</strong>' if duplicate else ""
+    filters = ["all", actual]
+    if actual == "noCover":
+        filters.append("missing")
+    if duplicate:
+        filters.append("duplicate")
+
     return f"""
-    <article class="book-card {html.escape(actual)}">
+    <article class="book-card {html.escape(actual)}" data-filters="{' '.join(filters)}">
       <header>
-        <h2>{html.escape(book["title"])}</h2>
-        <span>实际展示版本：{version_label(actual)}</span>
+        <h2>{html.escape(book["title"])}{duplicate_badge}</h2>
+        <span class="actual">当前实际展示：{version_label(actual)}</span>
       </header>
       <div class="covers">{''.join(cells)}</div>
     </article>
@@ -126,7 +134,8 @@ def version_label(version):
 
 
 def build_preview_html(books, report):
-    cards = "\n".join(preview_card(book) for book in books)
+    duplicate_titles = {item["title"] for item in report.get("duplicateTitles", [])}
+    cards = "\n".join(preview_card(book, duplicate_titles) for book in books)
     summary = html.escape(json.dumps(report["summary"], ensure_ascii=False, indent=2))
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -138,12 +147,13 @@ def build_preview_html(books, report):
     :root {{
       color-scheme: light;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-      background: #f6f7f9;
-      color: #20242a;
+      background: #f3efe7;
+      color: #25221d;
     }}
     body {{
       margin: 0;
       padding: 24px;
+      background: repeating-linear-gradient(0deg, rgba(117, 94, 62, 0.035) 0 1px, transparent 1px 32px);
     }}
     h1 {{
       margin: 0 0 12px;
@@ -151,22 +161,41 @@ def build_preview_html(books, report):
     }}
     .summary {{
       white-space: pre-wrap;
-      background: #fff;
-      border: 1px solid #d9dee7;
+      background: #fffdf8;
+      border: 1px solid #e2d8ca;
       border-radius: 8px;
       padding: 16px;
-      margin-bottom: 20px;
+      margin-bottom: 12px;
+    }}
+    .filters {{
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 0 0 18px;
+    }}
+    button {{
+      border: 1px solid #e2d8ca;
+      border-radius: 999px;
+      background: #fffdf8;
+      padding: 8px 12px;
+      cursor: pointer;
+    }}
+    button.active {{
+      border-color: #116a5b;
+      color: #116a5b;
+      background: #edf8f5;
     }}
     .grid {{
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(390px, 1fr));
       gap: 16px;
     }}
     .book-card {{
-      background: #fff;
-      border: 1px solid #d9dee7;
+      background: #fffdf8;
+      border: 1px solid #e2d8ca;
       border-radius: 8px;
       padding: 14px;
+      box-shadow: 0 12px 28px rgba(78, 58, 34, 0.1);
     }}
     .book-card header {{
       display: flex;
@@ -180,11 +209,11 @@ def build_preview_html(books, report):
       font-size: 17px;
       line-height: 1.35;
     }}
-    .book-card span {{
+    .book-card .actual {{
       flex: 0 0 auto;
       font-size: 12px;
-      color: #475467;
-      background: #eef2f6;
+      color: #51483c;
+      background: #f7f1e8;
       border-radius: 999px;
       padding: 4px 8px;
     }}
@@ -198,7 +227,7 @@ def build_preview_html(books, report):
     }}
     .label {{
       font-size: 12px;
-      color: #667085;
+      color: #746f66;
       margin-bottom: 6px;
     }}
     img {{
@@ -206,8 +235,8 @@ def build_preview_html(books, report):
       width: 100%;
       aspect-ratio: 2 / 3;
       object-fit: contain;
-      background: #f1f3f6;
-      border: 1px solid #e1e6ef;
+      background: #f5ecdf;
+      border: 1px solid #e2d8ca;
       border-radius: 6px;
     }}
     .missing {{
@@ -215,28 +244,60 @@ def build_preview_html(books, report):
       place-items: center;
       width: 100%;
       aspect-ratio: 2 / 3;
-      background: #f1f3f6;
-      border: 1px dashed #bcc6d3;
+      background: #f5ecdf;
+      border: 1px dashed #c9bba8;
       border-radius: 6px;
-      color: #8a94a6;
+      color: #9a8d7b;
       font-size: 13px;
+    }}
+    .dup-badge {{
+      display: inline-flex;
+      margin-left: 8px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      color: #b42318;
+      background: #fff1ee;
+      font-size: 12px;
+      vertical-align: middle;
     }}
     .custom {{ border-left: 4px solid #0f766e; }}
     .original {{ border-left: 4px solid #2563eb; }}
     .fallback {{ border-left: 4px solid #d97706; }}
     .noCover {{ border-left: 4px solid #b42318; }}
+    .book-card.hidden {{ display: none; }}
   </style>
 </head>
 <body>
   <h1>书封导入核对</h1>
   <div class="summary">{summary}</div>
+  <div class="filters">
+    <button class="active" data-filter="all">全部</button>
+    <button data-filter="missing">缺封面</button>
+    <button data-filter="duplicate">重复书名</button>
+    <button data-filter="custom">自制版</button>
+    <button data-filter="original">原版</button>
+    <button data-filter="fallback">普通版</button>
+  </div>
   <main class="grid">{cards}</main>
+  <script>
+    const buttons = Array.from(document.querySelectorAll("button[data-filter]"));
+    const cards = Array.from(document.querySelectorAll(".book-card"));
+    buttons.forEach(button => button.addEventListener("click", () => {{
+      buttons.forEach(item => item.classList.toggle("active", item === button));
+      const filter = button.dataset.filter;
+      cards.forEach(card => {{
+        card.classList.toggle("hidden", !card.dataset.filters.split(" ").includes(filter));
+      }});
+    }}));
+  </script>
 </body>
 </html>
 """
 
 
 def convert(excel_path, output_dir):
+    from openpyxl import load_workbook
+
     output_dir = Path(output_dir)
     data_dir = output_dir
     covers_dir = data_dir / "covers"
@@ -245,7 +306,12 @@ def convert(excel_path, output_dir):
     covers_dir.mkdir(parents=True, exist_ok=True)
 
     workbook = load_workbook(excel_path, read_only=False, data_only=True)
-    worksheet = workbook[SHEET_NAME] if SHEET_NAME in workbook.sheetnames else workbook.worksheets[0]
+    sheet_warning = ""
+    if SHEET_NAME in workbook.sheetnames:
+        worksheet = workbook[SHEET_NAME]
+    else:
+        worksheet = workbook.worksheets[0]
+        sheet_warning = f"警告：未找到指定 sheet「{SHEET_NAME}」，实际使用第一个 sheet「{worksheet.title}」。"
 
     images_by_cell = defaultdict(list)
     ignored_images = []
@@ -259,6 +325,7 @@ def convert(excel_path, output_dir):
     books = []
     row_reports = []
     blank_title_rows = []
+    skipped_empty_rows = []
     today = date.today().isoformat()
 
     for row in range(2, worksheet.max_row + 1):
@@ -267,6 +334,8 @@ def convert(excel_path, output_dir):
             has_content = any(clean_text(worksheet.cell(row, col).value) for col in range(1, 15))
             if has_content:
                 blank_title_rows.append(row)
+            else:
+                skipped_empty_rows.append(row)
             continue
 
         book_id = slug_id(len(books) + 1)
@@ -325,15 +394,26 @@ def convert(excel_path, output_dir):
     report = {
         "summary": {
             "source": str(excel_path),
-            "sheet": worksheet.title,
+            "requestedSheet": SHEET_NAME,
+            "usedSheet": worksheet.title,
+            "sheetWarning": sheet_warning,
             "generatedAt": today,
-            "bookCount": len(books),
-            "blankTitleRows": len(blank_title_rows),
-            "duplicateTitleCount": len(duplicate_titles),
+            "columnMapping": {
+                "title": "C列：书籍名称",
+                "covers.custom.flat": "K列：自制书封（平封）",
+                "covers.original.flat": "I列：原版书封（平封）",
+                "covers.original.threeD": "J列：原版书封（立体封）",
+                "covers.fallback.flat": "G列：平封",
+            },
+            "importedCount": len(books),
             "missingCoverCount": len(missing_covers),
+            "duplicateTitleCount": len(duplicate_titles),
+            "skippedEmptyRowCount": len(skipped_empty_rows),
+            "blankTitleWithContentRowCount": len(blank_title_rows),
             "actualVersionCounts": dict(actual_counts),
         },
         "blankTitleRows": blank_title_rows,
+        "skippedEmptyRows": skipped_empty_rows,
         "duplicateTitles": duplicate_titles,
         "missingCovers": missing_covers,
         "ignoredImages": ignored_images,

@@ -1,12 +1,22 @@
 {
   "summary": {
     "source": "/Users/heyeping/Downloads/樊登讲书-书籍封面.xlsx",
-    "sheet": "樊登读书APP每周书籍",
+    "requestedSheet": "樊登读书APP每周书籍",
+    "usedSheet": "樊登读书APP每周书籍",
+    "sheetWarning": "",
     "generatedAt": "2026-06-08",
-    "bookCount": 604,
-    "blankTitleRows": 11,
-    "duplicateTitleCount": 1,
+    "columnMapping": {
+      "title": "C列：书籍名称",
+      "covers.custom.flat": "K列：自制书封（平封）",
+      "covers.original.flat": "I列：原版书封（平封）",
+      "covers.original.threeD": "J列：原版书封（立体封）",
+      "covers.fallback.flat": "G列：平封"
+    },
+    "importedCount": 604,
     "missingCoverCount": 1,
+    "duplicateTitleCount": 1,
+    "skippedEmptyRowCount": 0,
+    "blankTitleWithContentRowCount": 11,
     "actualVersionCounts": {
       "custom": 125,
       "original": 478,
@@ -26,6 +36,7 @@
     615,
     616
   ],
+  "skippedEmptyRows": [],
   "duplicateTitles": [
     {
       "title": "活出生命的意义",

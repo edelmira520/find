@@ -7,6 +7,7 @@ const ROOT = __dirname;
 const APP_DIR = path.join(ROOT, "app");
 const DATA_DIR = path.join(ROOT, "data");
 const COVERS_DIR = path.join(DATA_DIR, "covers");
+const BACKUPS_DIR = path.join(DATA_DIR, "backups");
 const BOOKS_PATH = path.join(DATA_DIR, "books.json");
 const PORT = Number(process.env.PORT || 4173);
 
@@ -25,6 +26,7 @@ const MIME = {
 
 function ensureData() {
   fs.mkdirSync(COVERS_DIR, { recursive: true });
+  fs.mkdirSync(BACKUPS_DIR, { recursive: true });
   if (!fs.existsSync(BOOKS_PATH)) {
     fs.writeFileSync(BOOKS_PATH, "[]\n", "utf8");
   }
@@ -60,7 +62,15 @@ function readBooks() {
 
 function writeBooks(books) {
   ensureData();
+  backupBooks();
   fs.writeFileSync(BOOKS_PATH, JSON.stringify(books, null, 2), "utf8");
+}
+
+function backupBooks() {
+  if (!fs.existsSync(BOOKS_PATH)) return;
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  const backupPath = path.join(BACKUPS_DIR, `books-${stamp}.json`);
+  fs.copyFileSync(BOOKS_PATH, backupPath);
 }
 
 function sanitizePathPart(value) {
@@ -89,12 +99,14 @@ function defaultCovers() {
 
 function normalizeBook(input, existing, books) {
   const now = new Date().toISOString().slice(0, 10);
-  const book = existing || {
+  const book = existing ? { ...existing } : {
     id: input.id || nextBookId(books),
     createdAt: now,
   };
   book.title = String(input.title || "").trim();
-  book.preferredVersion = "auto";
+  book.preferredVersion = ["auto", "custom", "original", "fallback"].includes(input.preferredVersion)
+    ? input.preferredVersion
+    : "auto";
   book.covers = {
     ...defaultCovers(),
     ...(input.covers || {}),
@@ -104,6 +116,28 @@ function normalizeBook(input, existing, books) {
   book.covers.fallback = { ...defaultCovers().fallback, ...(book.covers.fallback || {}) };
   book.updatedAt = now;
   return book;
+}
+
+function localCoverPaths(book) {
+  const covers = book && book.covers ? book.covers : {};
+  return [
+    covers.custom && covers.custom.flat,
+    covers.custom && covers.custom.threeD,
+    covers.original && covers.original.flat,
+    covers.original && covers.original.threeD,
+    covers.fallback && covers.fallback.flat,
+    covers.fallback && covers.fallback.threeD,
+  ].filter(value => value && !/^https?:\/\//i.test(value) && !String(value).startsWith("data:"));
+}
+
+function cleanupUnreferencedCovers(deletedBook, remainingBooks) {
+  const stillUsed = new Set(remainingBooks.flatMap(localCoverPaths));
+  for (const relPath of localCoverPaths(deletedBook)) {
+    if (stillUsed.has(relPath)) continue;
+    const absolute = path.resolve(DATA_DIR, relPath);
+    if (!absolute.startsWith(COVERS_DIR) || !fs.existsSync(absolute)) continue;
+    fs.unlinkSync(absolute);
+  }
 }
 
 function saveDataUrl(dataUrl, bookId, slotKey) {
@@ -200,7 +234,14 @@ async function handleApi(req, res) {
   if (bookMatch && req.method === "DELETE") {
     const id = decodeURIComponent(bookMatch[1]);
     const books = readBooks();
-    writeBooks(books.filter(book => book.id !== id));
+    const deleted = books.find(book => book.id === id);
+    if (!deleted) {
+      send(res, 404, JSON.stringify({ error: "未找到书籍" }));
+      return;
+    }
+    const remaining = books.filter(book => book.id !== id);
+    cleanupUnreferencedCovers(deleted, remaining);
+    writeBooks(remaining);
     send(res, 200, JSON.stringify({ ok: true }));
     return;
   }

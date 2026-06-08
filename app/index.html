@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>书封资料库工具</title>
+  <title>书封素材工作台</title>
   <link rel="stylesheet" href="/app/styles.css">
 </head>
 <body>
   <div class="shell">
     <header class="topbar">
       <div>
-        <h1>书封资料库工具</h1>
-        <p>本地资料库，批量查找平面书封和立体书封。</p>
+        <h1>书封素材工作台</h1>
+        <p>本地 Node 版，日常核对、查找和维护书封资料。</p>
       </div>
       <nav class="tabs" aria-label="页面">
         <button class="tab active" data-view="search">查找</button>
@@ -21,37 +21,41 @@
 
     <main>
       <section id="searchView" class="view active">
-        <section class="panel">
-          <div class="panel-head">
-            <h2>批量识别书名</h2>
-            <button id="clearSearch" class="ghost">清空</button>
+        <section class="search-board">
+          <div class="paste-panel">
+            <div class="panel-head compact">
+              <h2>批量查找</h2>
+              <button id="clearSearch" class="ghost">清空</button>
+            </div>
+            <textarea id="pasteInput" placeholder="粘贴文本，例如：本周要找《高效演讲》《幸福的方法》、活着，还有 大脑效率革命"></textarea>
+            <div class="actions">
+              <button id="runMatch" class="primary strong" disabled>开始匹配</button>
+            </div>
           </div>
-          <textarea id="pasteInput" placeholder="粘贴文本，例如：本周要找《高效演讲》《幸福的方法》、活着，还有 大脑效率革命"></textarea>
-          <div class="actions">
-            <button id="extractTitles">识别书名</button>
-            <button id="runMatch" class="primary" disabled>开始匹配</button>
+
+          <div id="previewPanel" class="preview-panel">
+            <div class="panel-head compact">
+              <h2>识别书名</h2>
+              <span id="previewCount" class="muted">识别到 0 本</span>
+            </div>
+            <div id="titleChips" class="chips empty"></div>
+            <div class="inline-add">
+              <input id="manualTitle" type="text" placeholder="手动补充书名">
+              <button id="addManualTitle" class="ghost">添加</button>
+            </div>
           </div>
         </section>
 
-        <section id="previewPanel" class="panel hidden">
-          <div class="panel-head">
-            <h2>识别书名预览</h2>
-            <span id="previewCount" class="muted"></span>
-          </div>
-          <div id="titleChips" class="chips"></div>
-          <div class="inline-add">
-            <input id="manualTitle" type="text" placeholder="手动补充书名">
-            <button id="addManualTitle" class="ghost">添加</button>
-          </div>
-        </section>
-
-        <section id="resultsPanel" class="panel hidden">
-          <div class="panel-head">
-            <h2>查找结果</h2>
-            <div class="toolbar">
-              <span id="matchSummary" class="muted"></span>
-              <button id="gridMode" class="ghost active">网格</button>
-              <button id="listMode" class="ghost">列表</button>
+        <section id="resultsPanel" class="result-board hidden">
+          <div class="result-head">
+            <div>
+              <h2>封面墙</h2>
+              <div id="matchSummary" class="summary-line"></div>
+            </div>
+            <div class="filters" aria-label="结果筛选">
+              <button class="filter active" data-filter="all">显示全部</button>
+              <button class="filter" data-filter="possible">只看待确认</button>
+              <button class="filter" data-filter="missing">只看未找到</button>
             </div>
           </div>
           <div id="results" class="results-grid"></div>
@@ -59,65 +63,117 @@
       </section>
 
       <section id="manageView" class="view">
-        <section class="panel">
-          <div class="panel-head">
-            <h2>资料维护</h2>
-            <button id="newBook" class="primary">新增书籍</button>
-          </div>
-          <input id="manageSearch" type="search" placeholder="搜索书名">
-          <div id="bookList" class="book-list"></div>
+        <section class="manage-workbench">
+          <aside class="library-list">
+            <div class="panel-head compact">
+              <h2>素材库</h2>
+              <div class="mini-actions">
+                <button id="batchDrafts" class="ghost">批量草稿</button>
+                <button id="newBook" class="primary">新增</button>
+              </div>
+            </div>
+            <input id="manageSearch" type="search" placeholder="搜索书名">
+            <div id="bookList" class="book-list"></div>
+          </aside>
+
+          <section class="editor-panel">
+            <form id="bookForm">
+              <div class="editor-head">
+                <div>
+                  <h2 id="dialogTitle">选择一本书开始维护</h2>
+                  <p id="editorHint">左侧选择书籍，或新增一本待补封面的资料。</p>
+                </div>
+                <button id="resetEditor" class="ghost" type="button">取消编辑</button>
+              </div>
+              <input type="hidden" id="bookId">
+              <label class="field">
+                <span>书名</span>
+                <input id="bookTitle" required>
+              </label>
+              <label class="field">
+                <span>preferredVersion</span>
+                <select id="preferredVersion">
+                  <option value="auto">auto：自制 > 原版 > 普通</option>
+                  <option value="custom">custom：强制自制版</option>
+                  <option value="original">original：强制原版</option>
+                  <option value="fallback">fallback：强制普通版</option>
+                </select>
+              </label>
+              <div id="actualVersion" class="actual-version"></div>
+              <div id="versionWarning" class="version-warning hidden"></div>
+              <div class="upload-grid">
+                <div class="upload-slot" data-slot="custom_flat">
+                  <div class="slot-head">
+                    <h3>自制平封</h3>
+                    <button class="clear-slot" type="button">清空</button>
+                  </div>
+                  <div class="drop-zone">拖拽图片到这里，或点击选择</div>
+                  <input type="file" accept="image/*">
+                  <input class="cover-path" type="text" placeholder="或输入图片链接">
+                  <img alt="">
+                </div>
+                <div class="upload-slot" data-slot="original_flat">
+                  <div class="slot-head">
+                    <h3>原版平封</h3>
+                    <button class="clear-slot" type="button">清空</button>
+                  </div>
+                  <div class="drop-zone">拖拽图片到这里，或点击选择</div>
+                  <input type="file" accept="image/*">
+                  <input class="cover-path" type="text" placeholder="或输入图片链接">
+                  <img alt="">
+                </div>
+                <div class="upload-slot" data-slot="original_3d">
+                  <div class="slot-head">
+                    <h3>原版立封</h3>
+                    <button class="clear-slot" type="button">清空</button>
+                  </div>
+                  <div class="drop-zone">拖拽图片到这里，或点击选择</div>
+                  <input type="file" accept="image/*">
+                  <input class="cover-path" type="text" placeholder="或输入图片链接">
+                  <img alt="">
+                </div>
+                <div class="upload-slot" data-slot="fallback_flat">
+                  <div class="slot-head">
+                    <h3>普通平封</h3>
+                    <button class="clear-slot" type="button">清空</button>
+                  </div>
+                  <div class="drop-zone">拖拽图片到这里，或点击选择</div>
+                  <input type="file" accept="image/*">
+                  <input class="cover-path" type="text" placeholder="或输入图片链接">
+                  <img alt="">
+                </div>
+              </div>
+              <div class="dialog-actions">
+                <button id="deleteBook" class="danger" type="button">删除书籍</button>
+                <span></span>
+                <button id="saveBook" class="primary" type="submit">保存</button>
+              </div>
+            </form>
+          </section>
         </section>
       </section>
     </main>
   </div>
 
-  <dialog id="bookDialog">
-    <form method="dialog" id="bookForm">
+  <dialog id="detailDialog" class="detail-dialog">
+    <div class="dialog-head">
+      <h2 id="detailTitle">封面详情</h2>
+      <button id="closeDetail" class="icon" type="button" aria-label="关闭">×</button>
+    </div>
+    <div id="detailContent"></div>
+  </dialog>
+
+  <dialog id="batchDialog">
+    <form method="dialog" id="batchForm">
       <div class="dialog-head">
-        <h2 id="dialogTitle">新增书籍</h2>
-        <button id="closeDialog" class="icon" value="cancel" aria-label="关闭">×</button>
+        <h2>批量新增草稿</h2>
+        <button class="icon" value="cancel" aria-label="关闭">×</button>
       </div>
-      <input type="hidden" id="bookId">
-      <label class="field">
-        <span>书名</span>
-        <input id="bookTitle" required>
-      </label>
-      <div id="actualVersion" class="actual-version"></div>
-      <div class="upload-grid">
-        <div class="upload-slot" data-slot="custom_flat">
-          <h3>自制平封</h3>
-          <div class="drop-zone">拖拽图片到这里，或点击选择</div>
-          <input type="file" accept="image/*">
-          <input class="cover-path" type="text" placeholder="或输入图片链接">
-          <img alt="">
-        </div>
-        <div class="upload-slot" data-slot="original_flat">
-          <h3>原版平封</h3>
-          <div class="drop-zone">拖拽图片到这里，或点击选择</div>
-          <input type="file" accept="image/*">
-          <input class="cover-path" type="text" placeholder="或输入图片链接">
-          <img alt="">
-        </div>
-        <div class="upload-slot" data-slot="original_3d">
-          <h3>原版立封</h3>
-          <div class="drop-zone">拖拽图片到这里，或点击选择</div>
-          <input type="file" accept="image/*">
-          <input class="cover-path" type="text" placeholder="或输入图片链接">
-          <img alt="">
-        </div>
-        <div class="upload-slot" data-slot="fallback_flat">
-          <h3>普通平封</h3>
-          <div class="drop-zone">拖拽图片到这里，或点击选择</div>
-          <input type="file" accept="image/*">
-          <input class="cover-path" type="text" placeholder="或输入图片链接">
-          <img alt="">
-        </div>
-      </div>
+      <textarea id="batchTitles" placeholder="一行一本，或用顿号/逗号分隔"></textarea>
       <div class="dialog-actions">
-        <button id="deleteBook" class="danger" type="button">删除</button>
         <span></span>
         <button value="cancel" class="ghost">取消</button>
-        <button id="saveBook" class="primary" type="submit">保存</button>
+        <button class="primary" type="submit">生成草稿</button>
       </div>
     </form>
   </dialog>

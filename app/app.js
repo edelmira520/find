@@ -1,7 +1,9 @@
 let books = [];
 let recognizedTitles = [];
 let currentResults = [];
+let activeResultFilter = "all";
 let editingBook = null;
+let selectedBookId = "";
 let returnToMissingTitle = "";
 const uploadState = {};
 
@@ -13,6 +15,13 @@ const versionLabels = {
   original: "原版",
   fallback: "普通版",
   noCover: "缺封面",
+};
+
+const versionReasons = {
+  custom: "当前使用自制平封",
+  original: "当前使用原版平封，可搭配原版立封",
+  fallback: "当前使用普通平封",
+  noCover: "尚未设置可展示的平面封面",
 };
 
 function emptyCovers() {
@@ -31,33 +40,132 @@ function normalize(text) {
     .trim();
 }
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function dataUrl(path) {
   if (!path) return "";
   if (/^https?:\/\//i.test(path) || path.startsWith("data:")) return path;
   return `/data/${path}`;
 }
 
+function absoluteAssetUrl(path) {
+  if (!path) return "";
+  const url = dataUrl(path);
+  if (/^data:/i.test(url)) return url;
+  return new URL(url, window.location.origin).href;
+}
+
+async function copyText(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const input = document.createElement("textarea");
+  input.value = value;
+  input.setAttribute("readonly", "");
+  input.style.position = "fixed";
+  input.style.opacity = "0";
+  document.body.append(input);
+  input.select();
+  document.execCommand("copy");
+  input.remove();
+}
+
+async function copyCover(path, label, trigger) {
+  if (!path) return;
+  const url = absoluteAssetUrl(path);
+  try {
+    if (navigator.clipboard?.write && window.ClipboardItem && !url.startsWith("data:")) {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      await navigator.clipboard.write([new ClipboardItem({ [blob.type || "image/png"]: blob })]);
+      flashCopyButton(trigger, `已复制${label}`);
+      return;
+    }
+    await copyText(url);
+    flashCopyButton(trigger, "已复制链接");
+  } catch (error) {
+    await copyText(url);
+    flashCopyButton(trigger, "已复制链接");
+  }
+}
+
+function flashCopyButton(button, text) {
+  if (!button) return;
+  const original = button.textContent;
+  button.textContent = text;
+  button.disabled = true;
+  setTimeout(() => {
+    button.textContent = original;
+    button.disabled = false;
+  }, 1300);
+}
+
+function slotMap() {
+  return {
+    custom_flat: ["custom", "flat"],
+    original_flat: ["original", "flat"],
+    original_3d: ["original", "threeD"],
+    fallback_flat: ["fallback", "flat"],
+  };
+}
+
+function cloneBook(book) {
+  return JSON.parse(JSON.stringify(book || { covers: emptyCovers(), preferredVersion: "auto" }));
+}
+
+function hasFlat(book, version) {
+  return Boolean(book?.covers?.[version]?.flat);
+}
+
 function actualVersion(book) {
-  const covers = book.covers || emptyCovers();
-  if (covers.custom && covers.custom.flat) return "custom";
-  if (covers.original && covers.original.flat) return "original";
-  if (covers.fallback && covers.fallback.flat) return "fallback";
+  const preferred = book?.preferredVersion || "auto";
+  const covers = { ...emptyCovers(), ...(book?.covers || {}) };
+  if (["custom", "original", "fallback"].includes(preferred)) {
+    return covers[preferred]?.flat ? preferred : "noCover";
+  }
+  if (covers.custom?.flat) return "custom";
+  if (covers.original?.flat) return "original";
+  if (covers.fallback?.flat) return "fallback";
   return "noCover";
 }
 
 function displayCovers(book) {
   const version = actualVersion(book);
-  const covers = book.covers || emptyCovers();
+  const covers = { ...emptyCovers(), ...(book?.covers || {}) };
   if (version === "custom") return { version, flat: covers.custom.flat, threeD: "" };
   if (version === "original") return { version, flat: covers.original.flat, threeD: covers.original.threeD || "" };
   if (version === "fallback") return { version, flat: covers.fallback.flat, threeD: "" };
   return { version, flat: "", threeD: "" };
 }
 
+function displayReason(book) {
+  const preferred = book?.preferredVersion || "auto";
+  const version = actualVersion(book);
+  if (preferred !== "auto" && version === "noCover") {
+    return `手动选择了 ${versionLabels[preferred]}，但该版本没有平面封面`;
+  }
+  if (preferred !== "auto") return `手动选择 ${versionLabels[preferred]}`;
+  if (version === "custom") return "auto 规则命中：自制平封优先";
+  if (version === "original") return "auto 规则命中：无自制平封，使用原版平封";
+  if (version === "fallback") return "auto 规则命中：无自制/原版平封，使用普通平封";
+  return versionReasons.noCover;
+}
+
 async function loadBooks() {
   const response = await fetch("/api/books");
   books = await response.json();
   renderManageList();
+  if (selectedBookId) {
+    const fresh = books.find(book => book.id === selectedBookId);
+    if (fresh) openBookEditor(fresh);
+  }
 }
 
 function extractTitles(text) {
@@ -66,9 +174,10 @@ function extractTitles(text) {
   const add = title => {
     let cleaned = title.replace(/^《|》$/g, "").trim();
     cleaned = cleaned.replace(/^(还有|以及|另有|和|与|及)\s*/, "").trim();
-    cleaned = cleaned.replace(/^(本周|这周|今天|明天|昨天).*(找|查|要)\s*$/, "").trim();
     cleaned = cleaned.replace(/^(请|帮我|麻烦)?(找|查找|查询|需要|要找)\s*/, "").trim();
-    if (!cleaned) return;
+    cleaned = cleaned.replace(/^(本周|这周|今天|明天|昨天).*(找|查|要)\s*/, "").trim();
+    cleaned = cleaned.replace(/(这几本|这些书|封面|书封|资料)$/g, "").trim();
+    if (!cleaned || cleaned.length > 40) return;
     if (/^(本周|这周|今天|明天|昨天|还有|以及|另有)$/.test(cleaned)) return;
     const key = normalize(cleaned);
     if (!key || seen.has(key)) return;
@@ -76,26 +185,33 @@ function extractTitles(text) {
     found.push(cleaned);
   };
 
-  const bracketMatches = text.match(/《[^》]+》/g) || [];
-  bracketMatches.forEach(match => add(match));
-
-  let remainder = text.replace(/《[^》]+》/g, "\n");
-  remainder
+  (text.match(/《[^》]+》/g) || []).forEach(match => add(match));
+  text
+    .replace(/《[^》]+》/g, "\n")
     .split(/[\n\r,，、;；]+/g)
     .map(part => part.trim())
     .filter(Boolean)
-    .forEach(part => {
-      if (part.length <= 30) add(part);
-    });
+    .forEach(add);
 
   return found;
 }
 
+function syncRecognizedFromPaste() {
+  recognizedTitles = extractTitles($("#pasteInput").value);
+  renderTitlePreview();
+}
+
 function renderTitlePreview() {
-  $("#previewPanel").classList.toggle("hidden", recognizedTitles.length === 0);
   $("#runMatch").disabled = recognizedTitles.length === 0;
+  $("#runMatch").textContent = recognizedTitles.length ? `匹配 ${recognizedTitles.length} 本` : "开始匹配";
   $("#previewCount").textContent = `识别到 ${recognizedTitles.length} 本`;
-  $("#titleChips").innerHTML = "";
+  const chips = $("#titleChips");
+  chips.innerHTML = "";
+  chips.classList.toggle("empty", recognizedTitles.length === 0);
+  if (!recognizedTitles.length) {
+    chips.innerHTML = `<span class="empty-tip">粘贴文本后会自动出现可编辑书名标签</span>`;
+    return;
+  }
 
   recognizedTitles.forEach((title, index) => {
     const chip = document.createElement("span");
@@ -110,12 +226,13 @@ function renderTitlePreview() {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.textContent = "×";
+    remove.setAttribute("aria-label", "删除");
     remove.addEventListener("click", () => {
       recognizedTitles.splice(index, 1);
       renderTitlePreview();
     });
     chip.append(input, remove);
-    $("#titleChips").append(chip);
+    chips.append(chip);
   });
 }
 
@@ -153,31 +270,50 @@ function matchTitle(inputTitle) {
 
 function runMatching() {
   currentResults = recognizedTitles.filter(Boolean).map(matchTitle);
+  activeResultFilter = "all";
+  $$(".filter").forEach(button => button.classList.toggle("active", button.dataset.filter === "all"));
   renderResults();
 }
 
-function renderResults() {
-  const panel = $("#resultsPanel");
-  panel.classList.toggle("hidden", currentResults.length === 0);
-  const summary = currentResults.reduce((acc, result) => {
+function resultStats() {
+  const stats = currentResults.reduce((acc, result) => {
     acc[result.status] += 1;
     return acc;
   }, { matched: 0, possible: 0, missing: 0 });
-  $("#matchSummary").textContent = `已匹配 ${summary.matched} / 可能匹配 ${summary.possible} / 未找到 ${summary.missing}`;
+  stats.total = currentResults.length;
+  return stats;
+}
+
+function renderResults() {
+  $("#resultsPanel").classList.toggle("hidden", currentResults.length === 0);
+  const stats = resultStats();
+  $("#matchSummary").textContent = `识别 ${stats.total} 本、已匹配 ${stats.matched} 本、待确认 ${stats.possible} 本、未找到 ${stats.missing} 本`;
+  const visible = currentResults.filter(result => activeResultFilter === "all" || result.status === activeResultFilter);
   $("#results").innerHTML = "";
-  currentResults.forEach((result, index) => $("#results").append(renderResultCard(result, index)));
+  visible.forEach(result => {
+    const index = currentResults.indexOf(result);
+    $("#results").append(renderResultCard(result, index));
+  });
 }
 
 function statusLabel(status) {
-  return status === "matched" ? "已匹配" : status === "possible" ? "可能匹配" : "未找到";
+  return status === "matched" ? "已匹配" : status === "possible" ? "待确认" : "未找到";
 }
 
-function renderCoverStage(book) {
-  if (!book) return `<div class="cover-stage"><div class="no-image">未找到封面</div></div>`;
-  const covers = displayCovers(book);
-  const flat = covers.flat ? `<img class="flat-cover" src="${dataUrl(covers.flat)}" alt="平面封面">` : `<div class="no-image">缺平面封面</div>`;
+function renderCoverStage(book, status) {
+  const covers = book ? displayCovers(book) : { version: "noCover", flat: "", threeD: "" };
+  const flat = covers.flat
+    ? `<img class="flat-cover" src="${dataUrl(covers.flat)}" alt="平面封面">`
+    : `<div class="no-image">空封面</div>`;
   const three = covers.threeD ? `<img class="three-cover" src="${dataUrl(covers.threeD)}" alt="立体封面">` : "";
-  return `<div class="cover-stage">${flat}${three}</div>`;
+  return `
+    <div class="cover-stage">
+      ${flat}
+      ${three}
+      <span class="badge status-badge ${status}">${statusLabel(status)}</span>
+      <span class="badge version-badge ${covers.version}">${versionLabels[covers.version]}</span>
+    </div>
+  `;
 }
 
 function renderResultCard(result, index) {
@@ -186,45 +322,140 @@ function renderResultCard(result, index) {
   const book = result.book;
   const version = book ? actualVersion(book) : "noCover";
   card.innerHTML = `
-    ${renderCoverStage(book)}
+    ${renderCoverStage(book, result.status)}
     <div class="card-body">
-      <span class="status">${statusLabel(result.status)}</span>
       <h3>${escapeHtml(result.inputTitle)}</h3>
-      <div class="meta">匹配到：${book ? escapeHtml(book.title) : "无"}</div>
+      <div class="meta">${book ? `匹配到：${escapeHtml(book.title)}` : "资料库暂无匹配"}</div>
       <div class="meta">当前版本：${versionLabels[version]}</div>
+      <div class="card-actions"></div>
       <div class="candidate-list"></div>
     </div>
   `;
+  card.querySelector(".cover-stage").addEventListener("click", () => openDetail(result));
+  card.querySelector("h3").addEventListener("click", () => openDetail(result));
+  const actions = card.querySelector(".card-actions");
   const list = card.querySelector(".candidate-list");
-  if (result.status === "possible") {
-    result.candidates.forEach(candidate => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = `${candidate.book.title}（${Math.round(candidate.score * 100)}%）`;
-      button.addEventListener("click", () => {
-        currentResults[index] = { ...result, status: "matched", book: candidate.book };
-        renderResults();
+
+  if (result.status === "matched") {
+    const covers = displayCovers(book);
+    if (covers.flat) {
+      const copyFlat = document.createElement("button");
+      copyFlat.type = "button";
+      copyFlat.className = "copy-btn";
+      copyFlat.textContent = "复制平封";
+      copyFlat.addEventListener("click", event => {
+        event.stopPropagation();
+        copyCover(covers.flat, "平封", copyFlat);
       });
-      list.append(button);
-    });
+      actions.append(copyFlat);
+    }
+    if (covers.threeD) {
+      const copyThree = document.createElement("button");
+      copyThree.type = "button";
+      copyThree.className = "copy-btn";
+      copyThree.textContent = "复制立封";
+      copyThree.addEventListener("click", event => {
+        event.stopPropagation();
+        copyCover(covers.threeD, "立封", copyThree);
+      });
+      actions.append(copyThree);
+    }
+    const detail = document.createElement("button");
+    detail.type = "button";
+    detail.className = "ghost";
+    detail.textContent = "查看详情";
+    detail.addEventListener("click", () => openDetail(result));
+    actions.append(detail);
   }
+
+  if (result.status === "possible") {
+    const confirm = document.createElement("button");
+    confirm.type = "button";
+    confirm.className = "primary";
+    confirm.textContent = "确认此匹配";
+    confirm.addEventListener("click", () => {
+      currentResults[index] = { ...result, status: "matched" };
+      renderResults();
+    });
+    actions.append(confirm);
+    result.candidates.forEach(candidate => list.append(renderCandidate(candidate, index, result)));
+  }
+
   if (result.status === "missing") {
     const add = document.createElement("button");
     add.type = "button";
-    add.className = "primary";
+    add.className = "primary missing-add";
     add.textContent = "新增这本书";
-    add.addEventListener("click", () => openBookDialog(null, result.inputTitle));
-    list.append(add);
+    add.addEventListener("click", () => openBookEditor(null, result.inputTitle));
+    actions.append(add);
   }
+
   return card;
 }
 
-function escapeHtml(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+function renderCandidate(candidate, index, result) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "candidate";
+  const covers = displayCovers(candidate.book);
+  button.innerHTML = `
+    ${covers.flat ? `<img src="${dataUrl(covers.flat)}" alt="">` : `<span class="candidate-empty">无图</span>`}
+    <span>
+      <strong>${escapeHtml(candidate.book.title)}</strong>
+      <small>${versionLabels[covers.version]} · ${Math.round(candidate.score * 100)}%</small>
+    </span>
+  `;
+  button.addEventListener("click", () => {
+    currentResults[index] = { ...result, status: "matched", book: candidate.book };
+    renderResults();
+  });
+  return button;
+}
+
+function openDetail(result) {
+  const book = result.book;
+  $("#detailTitle").textContent = book ? book.title : result.inputTitle;
+  if (!book) {
+    $("#detailContent").innerHTML = `
+      <div class="detail-empty">
+        <div class="no-image large">空封面</div>
+        <button class="primary" id="detailAddMissing">新增这本书</button>
+      </div>
+    `;
+    $("#detailAddMissing").addEventListener("click", () => {
+      $("#detailDialog").close();
+      openBookEditor(null, result.inputTitle);
+    });
+    $("#detailDialog").showModal();
+    return;
+  }
+  const covers = displayCovers(book);
+  const original3d = book.covers?.original?.threeD || "";
+  const mismatchNote = covers.version === "custom" && original3d
+    ? `<div class="note">当前规则展示自制平封，因此不搭配原版立封，避免错配。</div>`
+    : "";
+  $("#detailContent").innerHTML = `
+    <div class="detail-grid">
+      <div class="detail-cover">${covers.flat ? `<img src="${dataUrl(covers.flat)}" alt="平面封面">` : `<div class="no-image large">缺平面封面</div>`}</div>
+      <div class="detail-side">
+        <div class="detail-3d">${covers.threeD ? `<img src="${dataUrl(covers.threeD)}" alt="立体封面">` : `<div class="no-image">无当前立体封</div>`}</div>
+        <div class="detail-copy-actions">
+          ${covers.flat ? `<button class="copy-btn" id="copyDetailFlat" type="button">复制平封</button>` : ""}
+          ${covers.threeD ? `<button class="copy-btn" id="copyDetailThree" type="button">复制立封</button>` : ""}
+          ${covers.flat ? `<button class="ghost" id="copyDetailLink" type="button">复制图片链接</button>` : ""}
+        </div>
+        <div class="actual-version">当前实际展示版本：${versionLabels[covers.version]}。原因：${escapeHtml(displayReason(book))}</div>
+        ${mismatchNote}
+      </div>
+    </div>
+  `;
+  $("#copyDetailFlat")?.addEventListener("click", event => copyCover(covers.flat, "平封", event.currentTarget));
+  $("#copyDetailThree")?.addEventListener("click", event => copyCover(covers.threeD, "立封", event.currentTarget));
+  $("#copyDetailLink")?.addEventListener("click", async event => {
+    await copyText(absoluteAssetUrl(covers.flat));
+    flashCopyButton(event.currentTarget, "已复制链接");
+  });
+  $("#detailDialog").showModal();
 }
 
 function renderManageList() {
@@ -234,35 +465,53 @@ function renderManageList() {
   books
     .filter(book => !query || normalize(book.title).includes(query))
     .forEach(book => {
-      const row = document.createElement("div");
-      row.className = "book-row";
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = `book-row ${book.id === selectedBookId ? "active" : ""}`;
       const covers = displayCovers(book);
       const thumb = covers.flat ? `<img src="${dataUrl(covers.flat)}" alt="">` : `<div class="thumb-placeholder">无图</div>`;
       row.innerHTML = `
         ${thumb}
-        <div>
+        <span>
           <strong>${escapeHtml(book.title)}</strong>
-          <div class="meta">当前实际展示版本：${versionLabels[covers.version]}</div>
-        </div>
-        <div class="meta">${covers.threeD ? "有立体封" : "无立体封"}</div>
-        <button class="ghost">编辑</button>
+          <small>${versionLabels[covers.version]} · ${covers.threeD ? "有立体封" : "无立体封"}</small>
+        </span>
       `;
-      row.querySelector("button").addEventListener("click", () => openBookDialog(book));
+      row.addEventListener("click", () => openBookEditor(book));
       list.append(row);
     });
 }
 
-function openBookDialog(book, presetTitle = "") {
+function openBookEditor(book, presetTitle = "") {
   editingBook = book;
+  selectedBookId = book?.id || "";
   returnToMissingTitle = presetTitle;
   Object.keys(uploadState).forEach(key => delete uploadState[key]);
   $("#dialogTitle").textContent = book ? "编辑书籍" : "新增书籍";
+  $("#editorHint").textContent = book ? "维护四个封面位和展示规则。" : "先保存草稿，再逐步补齐封面。";
   $("#bookId").value = book ? book.id : "";
   $("#bookTitle").value = book ? book.title : presetTitle;
-  $("#deleteBook").style.display = book ? "" : "none";
+  $("#preferredVersion").value = book?.preferredVersion || "auto";
+  $("#deleteBook").style.visibility = book ? "visible" : "hidden";
   fillUploadSlots(book || { covers: emptyCovers() });
   updateActualVersionPreview();
-  $("#bookDialog").showModal();
+  renderManageList();
+}
+
+function resetEditor() {
+  editingBook = null;
+  selectedBookId = "";
+  returnToMissingTitle = "";
+  Object.keys(uploadState).forEach(key => delete uploadState[key]);
+  $("#dialogTitle").textContent = "选择一本书开始维护";
+  $("#editorHint").textContent = "左侧选择书籍，或新增一本待补封面的资料。";
+  $("#bookForm").reset();
+  $("#bookId").value = "";
+  $("#preferredVersion").value = "auto";
+  $("#deleteBook").style.visibility = "hidden";
+  fillUploadSlots({ covers: emptyCovers() });
+  updateActualVersionPreview();
+  renderManageList();
 }
 
 function fillUploadSlots(book) {
@@ -292,14 +541,13 @@ function fillUploadSlots(book) {
 
 function collectBookFromForm() {
   const covers = emptyCovers();
-  covers.custom.flat = getSlotValue("custom_flat");
-  covers.original.flat = getSlotValue("original_flat");
-  covers.original.threeD = getSlotValue("original_3d");
-  covers.fallback.flat = getSlotValue("fallback_flat");
+  for (const [key, [version, slot]] of Object.entries(slotMap())) {
+    covers[version][slot] = getSlotValue(key);
+  }
   return {
     id: $("#bookId").value,
     title: $("#bookTitle").value.trim(),
-    preferredVersion: "auto",
+    preferredVersion: $("#preferredVersion").value,
     covers,
   };
 }
@@ -310,19 +558,15 @@ function getSlotValue(key) {
 
 function updateActualVersionPreview() {
   const book = collectBookFromForm();
-  if (uploadState.custom_flat) book.covers.custom.flat = "__pending_upload__";
-  if (uploadState.original_flat) book.covers.original.flat = "__pending_upload__";
-  if (uploadState.original_3d) book.covers.original.threeD = "__pending_upload__";
-  if (uploadState.fallback_flat) book.covers.fallback.flat = "__pending_upload__";
+  for (const [key, [version, slot]] of Object.entries(slotMap())) {
+    if (uploadState[key]) book.covers[version][slot] = "__pending_upload__";
+  }
   const version = actualVersion(book);
-  const reason = version === "custom"
-    ? "存在自制平封"
-    : version === "original"
-      ? "没有自制平封，存在原版平封"
-      : version === "fallback"
-        ? "没有自制平封和原版平封，存在普通平封"
-        : "尚未设置可展示的平面封面";
-  $("#actualVersion").textContent = `当前实际展示版本：${versionLabels[version]}。原因：${reason}`;
+  $("#actualVersion").textContent = `当前实际展示版本：${versionLabels[version]}。原因：${displayReason(book)}`;
+  const preferred = book.preferredVersion;
+  const showWarning = preferred !== "auto" && !hasFlat(book, preferred);
+  $("#versionWarning").classList.toggle("hidden", !showWarning);
+  $("#versionWarning").textContent = showWarning ? `警告：手动选择了 ${versionLabels[preferred]}，但该版本没有平面封面，保存后会显示缺封面。` : "";
 }
 
 async function fileToDataUrl(file) {
@@ -337,11 +581,9 @@ async function fileToDataUrl(file) {
 async function saveBook(event) {
   event.preventDefault();
   const book = collectBookFromForm();
-  const uploads = {};
-  for (const [key, value] of Object.entries(uploadState)) {
-    uploads[key] = value;
-  }
+  const uploads = { ...uploadState };
   const isEdit = Boolean(book.id);
+  const pendingReturnTitle = returnToMissingTitle;
   const response = await fetch(isEdit ? `/api/books/${encodeURIComponent(book.id)}` : "/api/books", {
     method: isEdit ? "PUT" : "POST",
     headers: { "Content-Type": "application/json" },
@@ -353,22 +595,48 @@ async function saveBook(event) {
     return;
   }
   const saved = await response.json();
-  $("#bookDialog").close();
   await loadBooks();
-  if (returnToMissingTitle) {
-    const index = currentResults.findIndex(result => normalize(result.inputTitle) === normalize(returnToMissingTitle));
+  openBookEditor(saved);
+  if (pendingReturnTitle) {
+    const index = currentResults.findIndex(result => normalize(result.inputTitle) === normalize(pendingReturnTitle));
     if (index >= 0) {
-      currentResults[index] = { inputTitle: returnToMissingTitle, status: "matched", book: saved, candidates: [{ book: saved, score: 1 }] };
+      currentResults[index] = { inputTitle: pendingReturnTitle, status: "matched", book: saved, candidates: [{ book: saved, score: 1 }] };
       renderResults();
+      $$(".tab").find(tab => tab.dataset.view === "search").click();
     }
+    returnToMissingTitle = "";
   }
 }
 
 async function deleteCurrentBook() {
   if (!editingBook) return;
-  if (!confirm(`确定删除《${editingBook.title}》吗？`)) return;
-  await fetch(`/api/books/${encodeURIComponent(editingBook.id)}`, { method: "DELETE" });
-  $("#bookDialog").close();
+  if (!confirm(`确定删除《${editingBook.title}》吗？本地且不再被任何记录引用的封面文件也会清理。`)) return;
+  const response = await fetch(`/api/books/${encodeURIComponent(editingBook.id)}`, { method: "DELETE" });
+  if (!response.ok) {
+    const error = await response.json();
+    alert(error.error || "删除失败");
+    return;
+  }
+  resetEditor();
+  await loadBooks();
+}
+
+async function createBatchDrafts(event) {
+  event.preventDefault();
+  const titles = extractTitles($("#batchTitles").value);
+  if (!titles.length) return;
+  for (const title of titles) {
+    await fetch("/api/books", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        book: { title, preferredVersion: "auto", covers: emptyCovers() },
+        uploads: {},
+      }),
+    });
+  }
+  $("#batchDialog").close();
+  $("#batchTitles").value = "";
   await loadBooks();
 }
 
@@ -382,15 +650,22 @@ function bindEvents() {
     });
   });
 
-  $("#extractTitles").addEventListener("click", () => {
-    recognizedTitles = extractTitles($("#pasteInput").value);
-    renderTitlePreview();
+  let pasteTimer = null;
+  $("#pasteInput").addEventListener("input", () => {
+    clearTimeout(pasteTimer);
+    pasteTimer = setTimeout(syncRecognizedFromPaste, 120);
   });
   $("#addManualTitle").addEventListener("click", () => {
     const title = $("#manualTitle").value.trim();
     if (title) recognizedTitles.push(title);
     $("#manualTitle").value = "";
     renderTitlePreview();
+  });
+  $("#manualTitle").addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      $("#addManualTitle").click();
+    }
   });
   $("#runMatch").addEventListener("click", runMatching);
   $("#clearSearch").addEventListener("click", () => {
@@ -400,21 +675,24 @@ function bindEvents() {
     renderTitlePreview();
     renderResults();
   });
-  $("#gridMode").addEventListener("click", () => {
-    $("#results").classList.remove("list");
-    $("#gridMode").classList.add("active");
-    $("#listMode").classList.remove("active");
-  });
-  $("#listMode").addEventListener("click", () => {
-    $("#results").classList.add("list");
-    $("#listMode").classList.add("active");
-    $("#gridMode").classList.remove("active");
+  $$(".filter").forEach(button => {
+    button.addEventListener("click", () => {
+      activeResultFilter = button.dataset.filter;
+      $$(".filter").forEach(item => item.classList.toggle("active", item === button));
+      renderResults();
+    });
   });
 
   $("#manageSearch").addEventListener("input", renderManageList);
-  $("#newBook").addEventListener("click", () => openBookDialog());
+  $("#newBook").addEventListener("click", () => openBookEditor());
+  $("#resetEditor").addEventListener("click", resetEditor);
   $("#bookForm").addEventListener("submit", saveBook);
   $("#deleteBook").addEventListener("click", deleteCurrentBook);
+  $("#preferredVersion").addEventListener("change", updateActualVersionPreview);
+  $("#bookTitle").addEventListener("input", updateActualVersionPreview);
+  $("#batchDrafts").addEventListener("click", () => $("#batchDialog").showModal());
+  $("#batchForm").addEventListener("submit", createBatchDrafts);
+  $("#closeDetail").addEventListener("click", () => $("#detailDialog").close());
 
   $$(".upload-slot").forEach(slot => {
     const key = slot.dataset.slot;
@@ -438,19 +716,34 @@ function bindEvents() {
       if (urlInput.value.trim()) {
         img.src = dataUrl(urlInput.value.trim());
         slot.classList.add("has-image");
+      } else {
+        img.removeAttribute("src");
+        slot.classList.remove("has-image");
       }
+      updateActualVersionPreview();
+    });
+    slot.querySelector(".clear-slot").addEventListener("click", () => {
+      delete uploadState[key];
+      urlInput.value = "";
+      fileInput.value = "";
+      img.removeAttribute("src");
+      slot.classList.remove("has-image");
       updateActualVersionPreview();
     });
     zone.addEventListener("dragover", event => {
       event.preventDefault();
       zone.classList.add("dragging");
     });
+    zone.addEventListener("dragleave", () => zone.classList.remove("dragging"));
     zone.addEventListener("drop", event => {
       event.preventDefault();
+      zone.classList.remove("dragging");
       setFile(event.dataTransfer.files[0]);
     });
   });
 }
 
 bindEvents();
+renderTitlePreview();
+resetEditor();
 loadBooks();
