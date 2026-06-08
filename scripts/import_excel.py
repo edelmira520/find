@@ -11,12 +11,14 @@ from pathlib import Path
 
 SHEET_NAME = "樊登读书APP每周书籍"
 TITLE_COL = 3
+STATUS_COL = 13
 COVER_COLUMNS = {
     11: ("custom", "flat", "custom_flat"),
     9: ("original", "flat", "original_flat"),
     10: ("original", "threeD", "original_3d"),
     7: ("fallback", "flat", "fallback_flat"),
 }
+OFFLINE_KEYWORDS = ["下线", "下架", "已下", "停用", "不可用"]
 
 
 def clean_text(value):
@@ -29,6 +31,11 @@ def clean_title(value):
     title = clean_text(value)
     title = re.sub(r"^[《<〈\s]+|[》>〉\s]+$", "", title)
     return re.sub(r"\s+", " ", title).strip()
+
+
+def resolve_status(value):
+    text = clean_text(value)
+    return "offline" if any(keyword in text for keyword in OFFLINE_KEYWORDS) else "active"
 
 
 def slug_id(index):
@@ -346,7 +353,7 @@ def convert(excel_path, output_dir):
         book = {
             "id": book_id,
             "title": title,
-            "status": "active",
+            "status": resolve_status(worksheet.cell(row, STATUS_COL).value),
             "preferredVersion": "auto",
             "covers": {
                 "custom": {"flat": "", "threeD": ""},
@@ -378,6 +385,7 @@ def convert(excel_path, output_dir):
             "row": row,
             "id": book_id,
             "title": title,
+            "status": book["status"],
             "actualVersion": resolve_actual_version(book),
             "covers": extracted,
             "multipleImagesInCell": multiple_images,

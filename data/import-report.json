@@ -7,6 +7,7 @@
     "generatedAt": "2026-06-08",
     "columnMapping": {
       "title": "C列：书籍名称",
+      "status": "M列：备注中含下线/下架/已下/停用/不可用",
       "covers.custom.flat": "K列：自制书封（平封）",
       "covers.original.flat": "I列：原版书封（平封）",
       "covers.original.threeD": "J列：原版书封（立体封）",
@@ -15,7 +16,7 @@
     "importedCount": 604,
     "missingCoverCount": 1,
     "duplicateTitleCount": 1,
-    "offlineCount": 0,
+    "offlineCount": 13,
     "skippedEmptyRowCount": 0,
     "blankTitleWithContentRowCount": 11,
     "actualVersionCounts": {
@@ -54,7 +55,60 @@
       "title": "僧侣与哲学家"
     }
   ],
-  "offlineBooks": [],
+  "offlineBooks": [
+    {
+      "id": "book_013",
+      "title": "消除压力，从脑开始"
+    },
+    {
+      "id": "book_014",
+      "title": "洗脑术：思想控制的荒唐史"
+    },
+    {
+      "id": "book_015",
+      "title": "僧侣与哲学家"
+    },
+    {
+      "id": "book_027",
+      "title": "特蕾莎修女：奇迹的故事"
+    },
+    {
+      "id": "book_038",
+      "title": "故道白云"
+    },
+    {
+      "id": "book_040",
+      "title": "基因革命"
+    },
+    {
+      "id": "book_069",
+      "title": "谷物大脑"
+    },
+    {
+      "id": "book_137",
+      "title": "名创优品没有秘密"
+    },
+    {
+      "id": "book_179",
+      "title": "经营者养成笔记"
+    },
+    {
+      "id": "book_204",
+      "title": "学会快乐"
+    },
+    {
+      "id": "book_272",
+      "title": "与病对话：全科医生手记"
+    },
+    {
+      "id": "book_311",
+      "title": "饮食术"
+    },
+    {
+      "id": "book_328",
+      "title": "薇娅：人生是用来改变的"
+    }
+  ],
   "ignoredImages": [],
   "rows": [
     {

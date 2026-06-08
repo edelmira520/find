@@ -25,7 +25,7 @@ http://localhost:4173
 ## 当前形态
 
 - 当前是 Node 本地版原型，数据直接写入本机文件。
-- 每次保存 `books.json` 前，会自动备份到 `data/backups/books-YYYYMMDD-HHMMSS.json`。
+- 每次保存 `books.json` 前，会自动备份到 `data/backups/books-YYYYMMDD-HHMMSS-mmm.json`。
 - 后续长期使用建议封装为 Tauri 桌面应用，保留本地文件数据，同时获得更自然的文件选择、托盘启动和桌面更新体验。
 
 ## 初始化导入
@@ -55,8 +55,34 @@ data/
 | `covers.original.flat` | `I列：原版书封（平封）` |
 | `covers.original.threeD` | `J列：原版书封（立体封）` |
 | `covers.fallback.flat` | `G列：平封` |
+| `status` | `M列：备注` 中包含“下线 / 下架 / 已下 / 停用 / 不可用”时记为 `offline` |
 
 保留按 Excel 内嵌图片 anchor 提取图片的逻辑。若找不到指定 sheet，导入报告会明显警告，并记录实际使用的 sheet。
+
+## 新 Excel 合并
+
+先生成 dry-run 合并计划，不修改正式资料：
+
+```bash
+python3 scripts/merge_excel.py new.xlsx --data data
+```
+
+输出到：
+
+```text
+data/merge-runs/YYYYMMDD-HHMMSS/
+  merge-summary.json
+  merge-plan.json
+  merge-preview.html
+```
+
+确认预览后，只执行安全动作 `add` 和 `fill`：
+
+```bash
+python3 scripts/merge_excel.py new.xlsx --data data --apply
+```
+
+`--apply` 会先备份 `data/books.json`，然后只新增资料库没有的书，或补齐旧书缺失的封面位。`conflict`、`offline_conflict`、`duplicate_conflict` 默认不执行；第一版不覆盖旧封面，也不自动恢复已下架书籍。
 
 ## 展示规则
 
