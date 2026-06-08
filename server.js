@@ -1,0 +1,221 @@
+const http = require("http");
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+
+const ROOT = __dirname;
+const APP_DIR = path.join(ROOT, "app");
+const DATA_DIR = path.join(ROOT, "data");
+const COVERS_DIR = path.join(DATA_DIR, "covers");
+const BOOKS_PATH = path.join(DATA_DIR, "books.json");
+const PORT = Number(process.env.PORT || 4173);
+
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+};
+
+function ensureData() {
+  fs.mkdirSync(COVERS_DIR, { recursive: true });
+  if (!fs.existsSync(BOOKS_PATH)) {
+    fs.writeFileSync(BOOKS_PATH, "[]\n", "utf8");
+  }
+}
+
+function send(res, status, body, type = "application/json; charset=utf-8") {
+  res.writeHead(status, {
+    "Content-Type": type,
+    "Cache-Control": "no-store",
+  });
+  res.end(body);
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", chunk => {
+      body += chunk;
+      if (body.length > 50 * 1024 * 1024) {
+        reject(new Error("Request body too large"));
+        req.destroy();
+      }
+    });
+    req.on("end", () => resolve(body));
+    req.on("error", reject);
+  });
+}
+
+function readBooks() {
+  ensureData();
+  return JSON.parse(fs.readFileSync(BOOKS_PATH, "utf8") || "[]");
+}
+
+function writeBooks(books) {
+  ensureData();
+  fs.writeFileSync(BOOKS_PATH, JSON.stringify(books, null, 2), "utf8");
+}
+
+function sanitizePathPart(value) {
+  return String(value || "")
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .replace(/_+/g, "_")
+    .slice(0, 80);
+}
+
+function nextBookId(books) {
+  let max = 0;
+  for (const book of books) {
+    const match = /^book_(\d+)$/.exec(book.id || "");
+    if (match) max = Math.max(max, Number(match[1]));
+  }
+  return `book_${String(max + 1).padStart(3, "0")}`;
+}
+
+function defaultCovers() {
+  return {
+    custom: { flat: "", threeD: "" },
+    original: { flat: "", threeD: "" },
+    fallback: { flat: "", threeD: "" },
+  };
+}
+
+function normalizeBook(input, existing, books) {
+  const now = new Date().toISOString().slice(0, 10);
+  const book = existing || {
+    id: input.id || nextBookId(books),
+    createdAt: now,
+  };
+  book.title = String(input.title || "").trim();
+  book.preferredVersion = "auto";
+  book.covers = {
+    ...defaultCovers(),
+    ...(input.covers || {}),
+  };
+  book.covers.custom = { ...defaultCovers().custom, ...(book.covers.custom || {}) };
+  book.covers.original = { ...defaultCovers().original, ...(book.covers.original || {}) };
+  book.covers.fallback = { ...defaultCovers().fallback, ...(book.covers.fallback || {}) };
+  book.updatedAt = now;
+  return book;
+}
+
+function saveDataUrl(dataUrl, bookId, slotKey) {
+  if (!dataUrl || !dataUrl.startsWith("data:")) return "";
+  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUrl);
+  if (!match) return "";
+  const mime = match[1].toLowerCase();
+  const ext = mime.includes("png") ? ".png" : mime.includes("webp") ? ".webp" : mime.includes("gif") ? ".gif" : ".jpg";
+  const filename = `${sanitizePathPart(bookId)}_${sanitizePathPart(slotKey)}_${crypto.randomBytes(4).toString("hex")}${ext}`;
+  const absolute = path.join(COVERS_DIR, filename);
+  fs.writeFileSync(absolute, Buffer.from(match[2], "base64"));
+  return `covers/${filename}`;
+}
+
+function processUploads(book, uploads) {
+  const slots = [
+    ["custom", "flat", "custom_flat"],
+    ["original", "flat", "original_flat"],
+    ["original", "threeD", "original_3d"],
+    ["fallback", "flat", "fallback_flat"],
+  ];
+  for (const [version, slot, key] of slots) {
+    const payload = uploads && uploads[key];
+    if (payload && payload.dataUrl) {
+      book.covers[version][slot] = saveDataUrl(payload.dataUrl, book.id, key);
+    }
+  }
+}
+
+function serveStatic(req, res) {
+  const url = new URL(req.url, `http://localhost:${PORT}`);
+  let filePath;
+  if (url.pathname === "/" || url.pathname === "/app") {
+    filePath = path.join(APP_DIR, "index.html");
+  } else if (url.pathname.startsWith("/app/")) {
+    filePath = path.join(APP_DIR, decodeURIComponent(url.pathname.slice(5)));
+  } else if (url.pathname.startsWith("/data/")) {
+    filePath = path.join(DATA_DIR, decodeURIComponent(url.pathname.slice(6)));
+  } else {
+    send(res, 404, "Not found", "text/plain; charset=utf-8");
+    return;
+  }
+
+  const base = url.pathname.startsWith("/data/") ? DATA_DIR : APP_DIR;
+  const resolved = path.resolve(filePath);
+  if (!resolved.startsWith(base) || !fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
+    send(res, 404, "Not found", "text/plain; charset=utf-8");
+    return;
+  }
+  send(res, 200, fs.readFileSync(resolved), MIME[path.extname(resolved).toLowerCase()] || "application/octet-stream");
+}
+
+async function handleApi(req, res) {
+  const url = new URL(req.url, `http://localhost:${PORT}`);
+  if (url.pathname === "/api/books" && req.method === "GET") {
+    send(res, 200, JSON.stringify(readBooks()));
+    return;
+  }
+  if (url.pathname === "/api/books" && req.method === "POST") {
+    const payload = JSON.parse(await readBody(req));
+    const books = readBooks();
+    const book = normalizeBook(payload.book || payload, null, books);
+    if (!book.title) {
+      send(res, 400, JSON.stringify({ error: "书名不能为空" }));
+      return;
+    }
+    processUploads(book, payload.uploads);
+    books.push(book);
+    writeBooks(books);
+    send(res, 200, JSON.stringify(book));
+    return;
+  }
+  const bookMatch = /^\/api\/books\/([^/]+)$/.exec(url.pathname);
+  if (bookMatch && req.method === "PUT") {
+    const id = decodeURIComponent(bookMatch[1]);
+    const payload = JSON.parse(await readBody(req));
+    const books = readBooks();
+    const index = books.findIndex(book => book.id === id);
+    if (index === -1) {
+      send(res, 404, JSON.stringify({ error: "未找到书籍" }));
+      return;
+    }
+    const book = normalizeBook({ ...payload.book, id }, books[index], books);
+    if (!book.title) {
+      send(res, 400, JSON.stringify({ error: "书名不能为空" }));
+      return;
+    }
+    processUploads(book, payload.uploads);
+    books[index] = book;
+    writeBooks(books);
+    send(res, 200, JSON.stringify(book));
+    return;
+  }
+  if (bookMatch && req.method === "DELETE") {
+    const id = decodeURIComponent(bookMatch[1]);
+    const books = readBooks();
+    writeBooks(books.filter(book => book.id !== id));
+    send(res, 200, JSON.stringify({ ok: true }));
+    return;
+  }
+  send(res, 404, JSON.stringify({ error: "Not found" }));
+}
+
+ensureData();
+const server = http.createServer((req, res) => {
+  if (req.url.startsWith("/api/")) {
+    handleApi(req, res).catch(error => send(res, 500, JSON.stringify({ error: error.message })));
+    return;
+  }
+  serveStatic(req, res);
+});
+
+server.listen(PORT, "127.0.0.1", () => {
+  console.log(`书封资料库工具已启动：http://localhost:${PORT}`);
+});
