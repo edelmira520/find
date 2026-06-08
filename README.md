@@ -44,7 +44,7 @@ data/
   import-preview.html
 ```
 
-`import-preview.html` 用来人工核对封面是否错配，支持筛选：全部、缺封面、重复书名、自制版、原版、普通版。
+`import-preview.html` 用来人工核对封面是否错配，支持筛选：全部、缺封面、重复书名、自制版、原版。
 
 ## Excel 映射
 
@@ -54,10 +54,9 @@ data/
 | `covers.custom.flat` | `K列：自制书封（平封）` |
 | `covers.original.flat` | `I列：原版书封（平封）` |
 | `covers.original.threeD` | `J列：原版书封（立体封）` |
-| `covers.fallback.flat` | `G列：平封` |
 | `status` | `M列：备注` 中包含“下线 / 下架 / 已下 / 停用 / 不可用”时记为 `offline` |
 
-保留按 Excel 内嵌图片 anchor 提取图片的逻辑。若找不到指定 sheet，导入报告会明显警告，并记录实际使用的 sheet。
+保留按 Excel 内嵌图片 anchor 提取图片的逻辑。隐藏的 `G列：平封` 和 `H列：立体封/侧封` 不再作为日常封面位导入或展示。若找不到指定 sheet，导入报告会明显警告，并记录实际使用的 sheet。
 
 ## 新 Excel 合并
 
@@ -89,13 +88,13 @@ python3 scripts/merge_excel.py new.xlsx --data data --apply
 `preferredVersion` 支持：
 
 ```text
-auto / custom / original / fallback
+auto / custom / original
 ```
 
 `auto` 默认按以下顺序解析：
 
 ```text
-custom > original > fallback
+custom > original
 ```
 
 如果有自制平封，只展示自制平封，不搭配原版立封，避免错配。若手动选择的版本没有平面封面，维护页会给出警告。
@@ -126,7 +125,7 @@ offline：平台已下架
 进入“资料维护”页：
 
 - 左侧列表查看缩略图、当前实际展示版本和是否有立体封。
-- 右侧编辑自制平封、原版平封、原版立封、普通平封。
+- 右侧编辑自制平封、原版平封、原版立封。
 - 每个封面位支持拖拽图片、点击选择图片、输入图片链接和清空。
 - “批量草稿”可以一次粘贴多本新书名，生成待补封面的新增记录。
 

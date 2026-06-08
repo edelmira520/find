@@ -16,7 +16,6 @@ COVER_COLUMNS = {
     11: ("custom", "flat", "custom_flat"),
     9: ("original", "flat", "original_flat"),
     10: ("original", "threeD", "original_3d"),
-    7: ("fallback", "flat", "fallback_flat"),
 }
 OFFLINE_KEYWORDS = ["下线", "下架", "已下", "停用", "不可用"]
 PREFER_ORIGINAL_KEYWORD = "优先使用原版书封"
@@ -84,14 +83,12 @@ def write_image(image, output_path):
 def resolve_actual_version(book):
     covers = book["covers"]
     preferred = book.get("preferredVersion", "auto")
-    if preferred in ["custom", "original", "fallback"]:
+    if preferred in ["custom", "original"]:
         return preferred if covers[preferred]["flat"] else "noCover"
     if covers["custom"]["flat"]:
         return "custom"
     if covers["original"]["flat"]:
         return "original"
-    if covers["fallback"]["flat"]:
-        return "fallback"
     return "noCover"
 
 
@@ -110,7 +107,6 @@ def preview_card(book, duplicate_titles):
         ("自制平封", covers["custom"]["flat"]),
         ("原版平封", covers["original"]["flat"]),
         ("原版立封", covers["original"]["threeD"]),
-        ("普通平封", covers["fallback"]["flat"]),
     ]
     for label, path in columns:
         if path:
@@ -144,7 +140,6 @@ def version_label(version):
     return {
         "custom": "自制版",
         "original": "原版",
-        "fallback": "普通版",
         "noCover": "缺封面",
     }.get(version, version)
 
@@ -235,7 +230,7 @@ def build_preview_html(books, report):
     }}
     .covers {{
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(3, 1fr);
       gap: 10px;
     }}
     .cover-cell {{
@@ -278,7 +273,6 @@ def build_preview_html(books, report):
     }}
     .custom {{ border-left: 4px solid #0f766e; }}
     .original {{ border-left: 4px solid #2563eb; }}
-    .fallback {{ border-left: 4px solid #d97706; }}
     .noCover {{ border-left: 4px solid #b42318; }}
     .book-card.hidden {{ display: none; }}
   </style>
@@ -293,7 +287,6 @@ def build_preview_html(books, report):
     <button data-filter="offline">已下架</button>
     <button data-filter="custom">自制版</button>
     <button data-filter="original">原版</button>
-    <button data-filter="fallback">普通版</button>
   </div>
   <main class="grid">{cards}</main>
   <script>
@@ -426,7 +419,8 @@ def convert(excel_path, output_dir):
                 "covers.custom.flat": "K列：自制书封（平封）",
                 "covers.original.flat": "I列：原版书封（平封）",
                 "covers.original.threeD": "J列：原版书封（立体封）",
-                "covers.fallback.flat": "G列：平封",
+                "status": "M列：备注（含下线/下架/已下/停用/不可用 => offline）",
+                "note": "M列：备注",
             },
             "importedCount": len(books),
             "missingCoverCount": len(missing_covers),

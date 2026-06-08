@@ -17,7 +17,6 @@ COVER_COLUMNS = {
     11: ("custom", "flat", "custom_flat", "自制平封"),
     9: ("original", "flat", "original_flat", "原版平封"),
     10: ("original", "threeD", "original_3d", "原版立封"),
-    7: ("fallback", "flat", "fallback_flat", "普通平封"),
 }
 ACTION_KEYS = ["add", "fill", "conflict", "offline_conflict", "duplicate_conflict", "note_conflict", "skip"]
 OFFLINE_KEYWORDS = ["下线", "下架", "已下", "停用", "不可用"]

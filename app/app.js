@@ -13,7 +13,6 @@ const $$ = selector => Array.from(document.querySelectorAll(selector));
 const versionLabels = {
   custom: "自制版",
   original: "原版",
-  fallback: "普通版",
   noCover: "缺封面",
 };
 
@@ -25,7 +24,6 @@ const bookStatusLabels = {
 const versionReasons = {
   custom: "当前使用自制平封",
   original: "当前使用原版平封，可搭配原版立封",
-  fallback: "当前使用普通平封",
   noCover: "尚未设置可展示的平面封面",
 };
 
@@ -124,7 +122,6 @@ function slotMap() {
     custom_flat: ["custom", "flat"],
     original_flat: ["original", "flat"],
     original_3d: ["original", "threeD"],
-    fallback_flat: ["fallback", "flat"],
   };
 }
 
@@ -159,18 +156,17 @@ function hasFlat(book, version) {
 
 function preferredVersionMissingFlat(book) {
   const preferred = book?.preferredVersion || "auto";
-  return preferred !== "auto" && ["custom", "original", "fallback"].includes(preferred) && !hasFlat(book, preferred);
+  return preferred !== "auto" && ["custom", "original"].includes(preferred) && !hasFlat(book, preferred);
 }
 
 function actualVersion(book) {
   const preferred = book?.preferredVersion || "auto";
   const covers = { ...emptyCovers(), ...(book?.covers || {}) };
-  if (["custom", "original", "fallback"].includes(preferred)) {
+  if (["custom", "original"].includes(preferred)) {
     return covers[preferred]?.flat ? preferred : "noCover";
   }
   if (covers.custom?.flat) return "custom";
   if (covers.original?.flat) return "original";
-  if (covers.fallback?.flat) return "fallback";
   return "noCover";
 }
 
@@ -179,7 +175,6 @@ function displayCovers(book) {
   const covers = { ...emptyCovers(), ...(book?.covers || {}) };
   if (version === "custom") return { version, flat: covers.custom.flat, threeD: "" };
   if (version === "original") return { version, flat: covers.original.flat, threeD: covers.original.threeD || "" };
-  if (version === "fallback") return { version, flat: covers.fallback.flat, threeD: "" };
   return { version, flat: "", threeD: "" };
 }
 
@@ -192,7 +187,6 @@ function displayReason(book) {
   if (preferred !== "auto") return `手动选择 ${versionLabels[preferred]}`;
   if (version === "custom") return "auto 规则命中：自制平封优先";
   if (version === "original") return "auto 规则命中：无自制平封，使用原版平封";
-  if (version === "fallback") return "auto 规则命中：无自制/原版平封，使用普通平封";
   return versionReasons.noCover;
 }
 
@@ -598,7 +592,6 @@ function fillUploadSlots(book) {
     custom_flat: covers.custom?.flat || "",
     original_flat: covers.original?.flat || "",
     original_3d: covers.original?.threeD || "",
-    fallback_flat: covers.fallback?.flat || "",
   };
   $$(".upload-slot").forEach(slot => {
     const key = slot.dataset.slot;

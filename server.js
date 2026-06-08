@@ -121,7 +121,7 @@ function normalizeBook(input, existing, books) {
   book.title = String(input.title || "").trim();
   book.note = String(input.note || book.note || "").trim();
   book.status = ["active", "offline"].includes(input.status) ? input.status : (book.status || "active");
-  book.preferredVersion = ["auto", "custom", "original", "fallback"].includes(input.preferredVersion)
+  book.preferredVersion = ["auto", "custom", "original"].includes(input.preferredVersion)
     ? input.preferredVersion
     : "auto";
   book.covers = {
@@ -187,7 +187,6 @@ function processUploads(book, uploads) {
     ["custom", "flat", "custom_flat"],
     ["original", "flat", "original_flat"],
     ["original", "threeD", "original_3d"],
-    ["fallback", "flat", "fallback_flat"],
   ];
   for (const [version, slot, key] of slots) {
     const payload = uploads && uploads[key];
