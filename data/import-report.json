@@ -15,6 +15,7 @@
     "importedCount": 604,
     "missingCoverCount": 1,
     "duplicateTitleCount": 1,
+    "offlineCount": 0,
     "skippedEmptyRowCount": 0,
     "blankTitleWithContentRowCount": 11,
     "actualVersionCounts": {
@@ -53,6 +54,7 @@
       "title": "僧侣与哲学家"
     }
   ],
+  "offlineBooks": [],
   "ignoredImages": [],
   "rows": [
     {

@@ -38,6 +38,7 @@
               <h2>识别书名</h2>
               <span id="previewCount" class="muted">识别到 0 本</span>
             </div>
+            <p class="preview-hint">请确认识别出的书名，可直接编辑或删除。</p>
             <div id="titleChips" class="chips empty"></div>
             <div class="inline-add">
               <input id="manualTitle" type="text" placeholder="手动补充书名">
@@ -56,6 +57,7 @@
               <button class="filter active" data-filter="all">显示全部</button>
               <button class="filter" data-filter="possible">只看待确认</button>
               <button class="filter" data-filter="missing">只看未找到</button>
+              <button class="filter" data-filter="offline">只看已下架</button>
             </div>
           </div>
           <div id="results" class="results-grid"></div>
@@ -89,6 +91,13 @@
               <label class="field">
                 <span>书名</span>
                 <input id="bookTitle" required>
+              </label>
+              <label class="field">
+                <span>书籍状态</span>
+                <select id="bookStatus">
+                  <option value="active">正常可用</option>
+                  <option value="offline">平台已下架</option>
+                </select>
               </label>
               <label class="field">
                 <span>preferredVersion</span>

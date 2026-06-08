@@ -165,8 +165,8 @@ button:disabled {
   display: grid;
   grid-template-columns: minmax(360px, 0.85fr) minmax(420px, 1.15fr);
   gap: 14px;
-  padding: 14px;
-  margin-bottom: 16px;
+  padding: 12px;
+  margin-bottom: 14px;
 }
 
 .paste-panel,
@@ -194,7 +194,7 @@ button:disabled {
 
 textarea {
   width: 100%;
-  min-height: 112px;
+  min-height: 94px;
   resize: vertical;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -232,7 +232,7 @@ select {
 }
 
 .chips {
-  min-height: 74px;
+  min-height: 62px;
   display: flex;
   align-content: flex-start;
   gap: 8px;
@@ -250,6 +250,12 @@ select {
 .empty-tip {
   color: #9a8d7b;
   font-size: 14px;
+}
+
+.preview-hint {
+  margin: -4px 0 8px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .chip {
@@ -325,6 +331,11 @@ select {
 
 .result-card.missing {
   border-color: #efc4bf;
+}
+
+.result-card.offline {
+  border-color: #d6a19c;
+  background: #fff8f6;
 }
 
 .cover-stage {
@@ -412,6 +423,11 @@ select {
   color: var(--danger);
 }
 
+.status-badge.offline {
+  background: #b42318;
+  color: #fff;
+}
+
 .card-body {
   min-height: 154px;
   padding: 12px;
@@ -442,6 +458,22 @@ select {
 
 .missing-add {
   width: 100%;
+}
+
+.manual-mark {
+  display: inline-flex;
+  margin-top: 7px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #edf8f5;
+  color: var(--primary-dark);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.offline-text {
+  color: var(--danger);
+  font-weight: 750;
 }
 
 .candidate-list {
@@ -552,6 +584,26 @@ select {
   color: var(--muted);
 }
 
+.status-pill {
+  display: inline-flex;
+  margin-left: 6px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-style: normal;
+  font-size: 11px;
+  vertical-align: 1px;
+}
+
+.status-pill.active {
+  color: var(--ok);
+  background: #e9f8ef;
+}
+
+.status-pill.offline {
+  color: var(--danger);
+  background: #fff1ee;
+}
+
 .editor-panel {
   min-height: 620px;
 }
@@ -590,6 +642,17 @@ select {
 .note {
   background: #fff6db;
   color: #855a12;
+}
+
+.danger-note {
+  background: #fff1ee;
+  color: var(--danger);
+}
+
+.offline-note {
+  background: #fff1ee;
+  color: var(--danger);
+  border: 1px solid #efc4bf;
 }
 
 .upload-grid {
@@ -668,6 +731,16 @@ select {
   align-items: center;
   gap: 10px;
   margin-top: 16px;
+}
+
+.editor-panel .dialog-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  margin: 16px -16px -16px;
+  padding: 12px 16px;
+  background: rgba(255, 253, 248, 0.96);
+  border-top: 1px solid var(--line);
 }
 
 dialog {

@@ -55,6 +55,16 @@ function readBody(req) {
   });
 }
 
+async function readJson(req, res) {
+  try {
+    const raw = await readBody(req);
+    return raw ? JSON.parse(raw) : {};
+  } catch (error) {
+    send(res, 400, JSON.stringify({ error: "请求 JSON 格式不正确" }));
+    return null;
+  }
+}
+
 function readBooks() {
   ensureData();
   return JSON.parse(fs.readFileSync(BOOKS_PATH, "utf8") || "[]");
@@ -68,7 +78,12 @@ function writeBooks(books) {
 
 function backupBooks() {
   if (!fs.existsSync(BOOKS_PATH)) return;
-  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  const now = new Date();
+  const stamp = now.toISOString()
+    .replace(/[-:]/g, "")
+    .replace("T", "-")
+    .replace("Z", "")
+    .replace(".", "-");
   const backupPath = path.join(BACKUPS_DIR, `books-${stamp}.json`);
   fs.copyFileSync(BOOKS_PATH, backupPath);
 }
@@ -104,6 +119,7 @@ function normalizeBook(input, existing, books) {
     createdAt: now,
   };
   book.title = String(input.title || "").trim();
+  book.status = ["active", "offline"].includes(input.status) ? input.status : (book.status || "active");
   book.preferredVersion = ["auto", "custom", "original", "fallback"].includes(input.preferredVersion)
     ? input.preferredVersion
     : "auto";
@@ -130,14 +146,27 @@ function localCoverPaths(book) {
   ].filter(value => value && !/^https?:\/\//i.test(value) && !String(value).startsWith("data:"));
 }
 
-function cleanupUnreferencedCovers(deletedBook, remainingBooks) {
+function isInsideCoversDir(absolute) {
+  const relative = path.relative(COVERS_DIR, absolute);
+  return relative && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function cleanupUnreferencedCoverPaths(candidatePaths, remainingBooks) {
   const stillUsed = new Set(remainingBooks.flatMap(localCoverPaths));
-  for (const relPath of localCoverPaths(deletedBook)) {
+  for (const relPath of candidatePaths) {
     if (stillUsed.has(relPath)) continue;
     const absolute = path.resolve(DATA_DIR, relPath);
-    if (!absolute.startsWith(COVERS_DIR) || !fs.existsSync(absolute)) continue;
-    fs.unlinkSync(absolute);
+    if (!isInsideCoversDir(absolute) || !fs.existsSync(absolute)) continue;
+    try {
+      fs.unlinkSync(absolute);
+    } catch (error) {
+      console.warn(`清理封面失败：${absolute}`, error.message);
+    }
   }
+}
+
+function cleanupUnreferencedCovers(deletedBook, remainingBooks) {
+  cleanupUnreferencedCoverPaths(localCoverPaths(deletedBook), remainingBooks);
 }
 
 function saveDataUrl(dataUrl, bookId, slotKey) {
@@ -196,8 +225,29 @@ async function handleApi(req, res) {
     send(res, 200, JSON.stringify(readBooks()));
     return;
   }
+  if (url.pathname === "/api/books/batch" && req.method === "POST") {
+    const payload = await readJson(req, res);
+    if (!payload) return;
+    const titles = Array.isArray(payload.titles) ? payload.titles : [];
+    const books = readBooks();
+    const created = [];
+    for (const title of titles) {
+      const book = normalizeBook({ title, status: "active", preferredVersion: "auto", covers: defaultCovers() }, null, books);
+      if (!book.title) continue;
+      books.push(book);
+      created.push(book);
+    }
+    if (!created.length) {
+      send(res, 400, JSON.stringify({ error: "没有可新增的书名" }));
+      return;
+    }
+    writeBooks(books);
+    send(res, 200, JSON.stringify({ created }));
+    return;
+  }
   if (url.pathname === "/api/books" && req.method === "POST") {
-    const payload = JSON.parse(await readBody(req));
+    const payload = await readJson(req, res);
+    if (!payload) return;
     const books = readBooks();
     const book = normalizeBook(payload.book || payload, null, books);
     if (!book.title) {
@@ -213,13 +263,15 @@ async function handleApi(req, res) {
   const bookMatch = /^\/api\/books\/([^/]+)$/.exec(url.pathname);
   if (bookMatch && req.method === "PUT") {
     const id = decodeURIComponent(bookMatch[1]);
-    const payload = JSON.parse(await readBody(req));
+    const payload = await readJson(req, res);
+    if (!payload) return;
     const books = readBooks();
     const index = books.findIndex(book => book.id === id);
     if (index === -1) {
       send(res, 404, JSON.stringify({ error: "未找到书籍" }));
       return;
     }
+    const oldBook = JSON.parse(JSON.stringify(books[index]));
     const book = normalizeBook({ ...payload.book, id }, books[index], books);
     if (!book.title) {
       send(res, 400, JSON.stringify({ error: "书名不能为空" }));
@@ -228,6 +280,7 @@ async function handleApi(req, res) {
     processUploads(book, payload.uploads);
     books[index] = book;
     writeBooks(books);
+    cleanupUnreferencedCoverPaths(localCoverPaths(oldBook), books);
     send(res, 200, JSON.stringify(book));
     return;
   }

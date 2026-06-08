@@ -90,6 +90,7 @@ def rel_img(path):
 
 def preview_card(book, duplicate_titles):
     actual = resolve_actual_version(book)
+    status = book.get("status", "active")
     covers = book["covers"]
     cells = []
     columns = [
@@ -112,12 +113,14 @@ def preview_card(book, duplicate_titles):
         filters.append("missing")
     if duplicate:
         filters.append("duplicate")
+    if status == "offline":
+        filters.append("offline")
 
     return f"""
     <article class="book-card {html.escape(actual)}" data-filters="{' '.join(filters)}">
       <header>
         <h2>{html.escape(book["title"])}{duplicate_badge}</h2>
-        <span class="actual">当前实际展示：{version_label(actual)}</span>
+        <span class="actual">当前实际展示：{version_label(actual)} · {"已下架" if status == "offline" else "正常"}</span>
       </header>
       <div class="covers">{''.join(cells)}</div>
     </article>
@@ -274,6 +277,7 @@ def build_preview_html(books, report):
     <button class="active" data-filter="all">全部</button>
     <button data-filter="missing">缺封面</button>
     <button data-filter="duplicate">重复书名</button>
+    <button data-filter="offline">已下架</button>
     <button data-filter="custom">自制版</button>
     <button data-filter="original">原版</button>
     <button data-filter="fallback">普通版</button>
@@ -342,6 +346,7 @@ def convert(excel_path, output_dir):
         book = {
             "id": book_id,
             "title": title,
+            "status": "active",
             "preferredVersion": "auto",
             "covers": {
                 "custom": {"flat": "", "threeD": ""},
@@ -390,6 +395,7 @@ def convert(excel_path, output_dir):
         if resolve_actual_version(book) == "noCover"
     ]
     actual_counts = Counter(resolve_actual_version(book) for book in books)
+    offline_count = sum(1 for book in books if book.get("status", "active") == "offline")
 
     report = {
         "summary": {
@@ -408,6 +414,7 @@ def convert(excel_path, output_dir):
             "importedCount": len(books),
             "missingCoverCount": len(missing_covers),
             "duplicateTitleCount": len(duplicate_titles),
+            "offlineCount": offline_count,
             "skippedEmptyRowCount": len(skipped_empty_rows),
             "blankTitleWithContentRowCount": len(blank_title_rows),
             "actualVersionCounts": dict(actual_counts),
