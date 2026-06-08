@@ -140,6 +140,19 @@ function isOffline(book) {
   return bookStatus(book) === "offline";
 }
 
+function bookNote(book) {
+  return String(book?.note || "").trim();
+}
+
+function prefersOriginalFromNote(book) {
+  return bookNote(book).replace(/\s+/g, "").includes("优先使用原版书封");
+}
+
+function noteBadgeText(book) {
+  if (!bookNote(book)) return "";
+  return prefersOriginalFromNote(book) ? "备注：用原版" : "有备注";
+}
+
 function hasFlat(book, version) {
   return Boolean(book?.covers?.[version]?.flat);
 }
@@ -365,6 +378,7 @@ function renderResultCard(result, index) {
   const version = book ? actualVersion(book) : "noCover";
   const manualMissing = book && preferredVersionMissingFlat(book);
   const offline = book && isOffline(book);
+  const noteBadge = book ? noteBadgeText(book) : "";
   card.innerHTML = `
     ${renderCoverStage(result)}
     <div class="card-body">
@@ -372,6 +386,7 @@ function renderResultCard(result, index) {
       <div class="meta">${book ? `匹配到：${escapeHtml(book.title)}` : "资料库暂无匹配"}</div>
       ${offline ? `<div class="meta offline-text">平台已下架</div>` : ""}
       <div class="meta">${manualMissing ? "手动选择的版本缺少平面封面" : `当前版本：${versionLabels[version]}`}</div>
+      ${noteBadge ? `<div class="note-chip">${escapeHtml(noteBadge)}</div>` : ""}
       ${result.confirmedManually ? `<div class="manual-mark">人工确认</div>` : ""}
       <div class="card-actions"></div>
       <div class="candidate-list"></div>
@@ -486,6 +501,7 @@ function openDetail(result) {
     ? `<div class="note danger-note">手动选择的版本缺少平面封面。</div>`
     : "";
   const offlineNote = offline ? `<div class="note offline-note">这本书已在平台下架。</div>` : "";
+  const fullNote = bookNote(book);
   $("#detailContent").innerHTML = `
     <div class="detail-grid">
       <div class="detail-cover">${covers.flat ? `<img src="${dataUrl(covers.flat)}" alt="平面封面">` : `<div class="no-image large">缺平面封面</div>`}</div>
@@ -497,6 +513,7 @@ function openDetail(result) {
           ${covers.flat ? `<button class="ghost" id="copyDetailLink" type="button">复制图片链接</button>` : ""}
         </div>
         <div class="actual-version">当前实际展示版本：${versionLabels[covers.version]}。原因：${escapeHtml(displayReason(book))}</div>
+        ${fullNote ? `<div class="note full-note"><strong>备注</strong><p>${escapeHtml(fullNote)}</p></div>` : ""}
         ${offlineNote}
         ${manualMissingNote}
         ${mismatchNote}
@@ -525,12 +542,13 @@ function renderManageList() {
       row.className = `book-row ${book.id === selectedBookId ? "active" : ""}`;
       const covers = displayCovers(book);
       const offline = isOffline(book);
+      const noteBadge = noteBadgeText(book);
       const thumb = covers.flat ? `<img src="${dataUrl(covers.flat)}" alt="">` : `<div class="thumb-placeholder">无图</div>`;
       row.innerHTML = `
         ${thumb}
         <span>
           <strong>${escapeHtml(book.title)}${offline ? `<em class="status-pill offline">已下架</em>` : `<em class="status-pill active">正常</em>`}</strong>
-          <small>${versionLabels[covers.version]} · ${covers.threeD ? "有立体封" : "无立体封"}</small>
+          <small>${versionLabels[covers.version]} · ${covers.threeD ? "有立体封" : "无立体封"}${noteBadge ? ` · ${escapeHtml(noteBadge)}` : ""}</small>
         </span>
       `;
       row.addEventListener("click", () => openBookEditor(book));
@@ -548,6 +566,7 @@ function openBookEditor(book, presetTitle = "") {
   $("#bookId").value = book ? book.id : "";
   $("#bookTitle").value = book ? book.title : presetTitle;
   $("#bookStatus").value = bookStatus(book);
+  $("#bookNote").value = bookNote(book);
   $("#preferredVersion").value = book?.preferredVersion || "auto";
   $("#deleteBook").style.visibility = book ? "visible" : "hidden";
   fillUploadSlots(book || { covers: emptyCovers() });
@@ -565,6 +584,7 @@ function resetEditor() {
   $("#bookForm").reset();
   $("#bookId").value = "";
   $("#bookStatus").value = "active";
+  $("#bookNote").value = "";
   $("#preferredVersion").value = "auto";
   $("#deleteBook").style.visibility = "hidden";
   fillUploadSlots({ covers: emptyCovers() });
@@ -605,6 +625,7 @@ function collectBookFromForm() {
   return {
     id: $("#bookId").value,
     title: $("#bookTitle").value.trim(),
+    note: $("#bookNote").value.trim(),
     status: $("#bookStatus").value,
     preferredVersion: $("#preferredVersion").value,
     covers,
@@ -765,6 +786,7 @@ function bindEvents() {
   $("#deleteBook").addEventListener("click", deleteCurrentBook);
   $("#preferredVersion").addEventListener("change", updateActualVersionPreview);
   $("#bookStatus").addEventListener("change", updateActualVersionPreview);
+  $("#bookNote").addEventListener("input", updateActualVersionPreview);
   $("#bookTitle").addEventListener("input", updateActualVersionPreview);
   $("#batchDrafts").addEventListener("click", () => $("#batchDialog").showModal());
   $("#batchForm").addEventListener("submit", createBatchDrafts);

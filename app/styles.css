@@ -471,6 +471,17 @@ select {
   font-weight: 750;
 }
 
+.note-chip {
+  display: inline-flex;
+  margin-top: 7px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #f7f1e8;
+  color: #5d5449;
+  font-size: 12px;
+  font-weight: 750;
+}
+
 .offline-text {
   color: var(--danger);
   font-weight: 750;
@@ -653,6 +664,16 @@ select {
   background: #fff1ee;
   color: var(--danger);
   border: 1px solid #efc4bf;
+}
+
+.full-note strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.full-note p {
+  margin: 0;
+  white-space: pre-wrap;
 }
 
 .upload-grid {

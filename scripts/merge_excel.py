@@ -19,8 +19,9 @@ COVER_COLUMNS = {
     10: ("original", "threeD", "original_3d", "原版立封"),
     7: ("fallback", "flat", "fallback_flat", "普通平封"),
 }
-ACTION_KEYS = ["add", "fill", "conflict", "offline_conflict", "duplicate_conflict", "skip"]
+ACTION_KEYS = ["add", "fill", "conflict", "offline_conflict", "duplicate_conflict", "note_conflict", "skip"]
 OFFLINE_KEYWORDS = ["下线", "下架", "已下", "停用", "不可用"]
+PREFER_ORIGINAL_KEYWORD = "优先使用原版书封"
 
 
 def clean_text(value):
@@ -38,6 +39,11 @@ def clean_title(value):
 def resolve_status(value):
     text = clean_text(value)
     return "offline" if any(keyword in text for keyword in OFFLINE_KEYWORDS) else "active"
+
+
+def resolve_preferred_version(note):
+    compact = re.sub(r"\s+", "", clean_text(note))
+    return "original" if PREFER_ORIGINAL_KEYWORD in compact else "auto"
 
 
 def normalize_title(value):
@@ -187,10 +193,13 @@ def read_excel_rows(excel_path, run_dir, data_dir):
             covers[version][slot] = preview_path
             incoming[slot_key] = preview_path
 
+        note = clean_text(worksheet.cell(row_index, STATUS_COL).value)
         rows.append({
             "row": row_index,
             "title": title,
-            "status": resolve_status(worksheet.cell(row_index, STATUS_COL).value),
+            "note": note,
+            "status": resolve_status(note),
+            "preferredVersion": resolve_preferred_version(note),
             "normalizedTitle": normalize_title(title),
             "covers": covers,
             "incoming": incoming,
@@ -242,6 +251,11 @@ def classify_row(row, existing_groups, duplicate_new_keys, duplicate_existing_ke
     if existing.get("status", "active") == "offline":
         return "offline_conflict", existing, "资料库中此书已下架，不能自动恢复", [], new_slots
 
+    old_note = clean_text(existing.get("note", ""))
+    new_note = clean_text(row.get("note", ""))
+    if old_note and new_note and old_note != new_note:
+        return "note_conflict", existing, "新旧备注都存在且不同，不能自动覆盖", [], new_slots
+
     fill_slots = []
     conflict_slots = []
     for slot in new_slots:
@@ -252,8 +266,8 @@ def classify_row(row, existing_groups, duplicate_new_keys, duplicate_existing_ke
 
     if conflict_slots:
         return "conflict", existing, "同一封面位新旧资料都存在，默认不能覆盖", fill_slots, conflict_slots
-    if fill_slots:
-        return "fill", existing, "旧资料缺少部分封面，新 Excel 可以补充", fill_slots, []
+    if fill_slots or (new_note and not old_note):
+        return "fill", existing, "旧资料缺少部分封面或备注，新 Excel 可以补充", fill_slots, []
     return "skip", existing, "没有新信息", [], []
 
 
@@ -273,12 +287,15 @@ def build_plan(excel_rows, books):
             "row": row["row"],
             "newTitle": row["title"],
             "newStatus": row.get("status", "active"),
+            "newNote": row.get("note", ""),
+            "newPreferredVersion": row.get("preferredVersion", "auto"),
             "normalizedTitle": row["normalizedTitle"],
             "newCovers": row["covers"],
             "newCoverSlots": [slot for slot in cover_slots() if get_cover(row["covers"], slot)],
             "existingBookId": existing.get("id") if existing else "",
             "existingTitle": existing.get("title") if existing else "",
             "existingStatus": existing.get("status", "active") if existing else "",
+            "existingNote": existing.get("note", "") if existing else "",
             "existingCovers": existing.get("covers", empty_covers()) if existing else empty_covers(),
             "fillSlots": fill_slots,
             "conflictSlots": conflict_slots,
@@ -294,6 +311,7 @@ def summarize(plan, excel_info):
         "conflict": 0,
         "offlineConflict": 0,
         "duplicateConflict": 0,
+        "noteConflict": 0,
         "skip": 0,
         "missingTitle": excel_info["missingTitle"],
         "missingCover": sum(1 for row in excel_info["rows"] if row["missingCover"]),
@@ -303,6 +321,8 @@ def summarize(plan, excel_info):
             summary["offlineConflict"] += 1
         elif item["action"] == "duplicate_conflict":
             summary["duplicateConflict"] += 1
+        elif item["action"] == "note_conflict":
+            summary["noteConflict"] += 1
         else:
             summary[item["action"]] += 1
     return summary
@@ -336,6 +356,8 @@ def build_preview_html(summary, plan, run_dir):
         old_title = item["existingTitle"] or "无"
         new_status = "已下架" if item.get("newStatus") == "offline" else "正常"
         old_status = "已下架" if item.get("existingStatus") == "offline" else "正常" if item.get("existingTitle") else "无"
+        new_note = item.get("newNote") or "无"
+        old_note = item.get("existingNote") or "无"
         rows.append(f"""
         <article class="merge-card {html.escape(action)}" data-action="{html.escape(action)}">
           <header>
@@ -346,6 +368,10 @@ def build_preview_html(summary, plan, run_dir):
             <strong>{html.escape(action)}</strong>
           </header>
           <div class="reason">{html.escape(reason)}</div>
+          <div class="notes">
+            <div><b>新备注</b><p>{html.escape(new_note)}</p></div>
+            <div><b>旧备注</b><p>{html.escape(old_note)}</p></div>
+          </div>
           <div class="compare">
             <section>
               <h3>新 Excel 封面</h3>
@@ -380,6 +406,7 @@ def build_preview_html(summary, plan, run_dir):
     .merge-card.conflict {{ border-left-color: #b7791f; }}
     .merge-card.offline_conflict {{ border-left-color: #b42318; background: #fff7f5; }}
     .merge-card.duplicate_conflict {{ border-left-color: #7f56d9; }}
+    .merge-card.note_conflict {{ border-left-color: #d97706; background: #fffaf0; }}
     .merge-card.skip {{ border-left-color: #8b7f70; opacity: 0.78; }}
     .merge-card.hidden {{ display: none; }}
     header {{ display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 10px; }}
@@ -387,6 +414,10 @@ def build_preview_html(summary, plan, run_dir):
     header p {{ margin-top: 5px; color: #746f66; font-size: 14px; }}
     header strong {{ border-radius: 999px; padding: 5px 9px; background: #f7f1e8; }}
     .reason {{ margin-bottom: 12px; color: #5d5449; }}
+    .notes {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }}
+    .notes div {{ background: #f7f1e8; border-radius: 7px; padding: 9px; }}
+    .notes b {{ display: block; margin-bottom: 4px; }}
+    .notes p {{ margin: 0; white-space: pre-wrap; color: #5d5449; }}
     .offline_conflict .reason {{ color: #b42318; font-weight: 700; }}
     .compare {{ display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }}
     section {{ min-width: 0; }}
@@ -447,8 +478,9 @@ def apply_plan(plan, books, data_dir):
             books.append({
                 "id": book_id,
                 "title": item["newTitle"],
+                "note": item.get("newNote", ""),
                 "status": item.get("newStatus", "active"),
-                "preferredVersion": "auto",
+                "preferredVersion": item.get("newPreferredVersion", "auto"),
                 "covers": covers,
                 "createdAt": now,
                 "updatedAt": now,
@@ -460,6 +492,12 @@ def apply_plan(plan, books, data_dir):
                 applied["skipped"] += 1
                 continue
             changed = False
+            new_note = clean_text(item.get("newNote", ""))
+            if new_note and not clean_text(book.get("note", "")):
+                book["note"] = new_note
+                if item.get("newPreferredVersion") == "original" and book.get("preferredVersion", "auto") == "auto":
+                    book["preferredVersion"] = "original"
+                changed = True
             for slot in item["fillSlots"]:
                 if get_cover(book.get("covers", {}), slot):
                     continue

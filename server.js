@@ -119,6 +119,7 @@ function normalizeBook(input, existing, books) {
     createdAt: now,
   };
   book.title = String(input.title || "").trim();
+  book.note = String(input.note || book.note || "").trim();
   book.status = ["active", "offline"].includes(input.status) ? input.status : (book.status || "active");
   book.preferredVersion = ["auto", "custom", "original", "fallback"].includes(input.preferredVersion)
     ? input.preferredVersion

@@ -19,6 +19,7 @@ COVER_COLUMNS = {
     7: ("fallback", "flat", "fallback_flat"),
 }
 OFFLINE_KEYWORDS = ["下线", "下架", "已下", "停用", "不可用"]
+PREFER_ORIGINAL_KEYWORD = "优先使用原版书封"
 
 
 def clean_text(value):
@@ -36,6 +37,11 @@ def clean_title(value):
 def resolve_status(value):
     text = clean_text(value)
     return "offline" if any(keyword in text for keyword in OFFLINE_KEYWORDS) else "active"
+
+
+def resolve_preferred_version(note):
+    compact = re.sub(r"\s+", "", clean_text(note))
+    return "original" if PREFER_ORIGINAL_KEYWORD in compact else "auto"
 
 
 def slug_id(index):
@@ -350,11 +356,13 @@ def convert(excel_path, output_dir):
             continue
 
         book_id = slug_id(len(books) + 1)
+        note = clean_text(worksheet.cell(row, STATUS_COL).value)
         book = {
             "id": book_id,
             "title": title,
-            "status": resolve_status(worksheet.cell(row, STATUS_COL).value),
-            "preferredVersion": "auto",
+            "note": note,
+            "status": resolve_status(note),
+            "preferredVersion": resolve_preferred_version(note),
             "covers": {
                 "custom": {"flat": "", "threeD": ""},
                 "original": {"flat": "", "threeD": ""},
@@ -385,6 +393,7 @@ def convert(excel_path, output_dir):
             "row": row,
             "id": book_id,
             "title": title,
+            "note": book["note"],
             "status": book["status"],
             "actualVersion": resolve_actual_version(book),
             "covers": extracted,
