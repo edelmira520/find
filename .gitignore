@@ -1,2 +1,18 @@
 .DS_Store
+
+# Local working data. Keep the private book library, imported covers, previews,
+# merge runs, and backups out of git; commit only small redacted samples if needed.
+data/books.json
+data/covers/
+data/import-report.json
+data/import-preview.html
+data/merge-runs/
 data/backups/
+
+# Python / script runtime noise
+__pycache__/
+*.py[cod]
+.venv/
+
+# Node runtime noise, if dependencies are added later
+node_modules/

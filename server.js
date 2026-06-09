@@ -11,6 +11,15 @@ const BACKUPS_DIR = path.join(DATA_DIR, "backups");
 const BOOKS_PATH = path.join(DATA_DIR, "books.json");
 const PORT = Number(process.env.PORT || 4173);
 
+const MAX_JSON_BODY_BYTES = 50 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
+const ALLOWED_UPLOAD_MIMES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+]);
+
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -36,6 +45,7 @@ function send(res, status, body, type = "application/json; charset=utf-8") {
   res.writeHead(status, {
     "Content-Type": type,
     "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
   });
   res.end(body);
 }
@@ -45,7 +55,7 @@ function readBody(req) {
     let body = "";
     req.on("data", chunk => {
       body += chunk;
-      if (body.length > 50 * 1024 * 1024) {
+      if (body.length > MAX_JSON_BODY_BYTES) {
         reject(new Error("Request body too large"));
         req.destroy();
       }
@@ -67,13 +77,23 @@ async function readJson(req, res) {
 
 function readBooks() {
   ensureData();
-  return JSON.parse(fs.readFileSync(BOOKS_PATH, "utf8") || "[]");
+  try {
+    const parsed = JSON.parse(fs.readFileSync(BOOKS_PATH, "utf8") || "[]");
+    if (!Array.isArray(parsed)) throw new Error("books.json must contain an array");
+    return parsed;
+  } catch (error) {
+    const wrapped = new Error(`资料库文件 data/books.json 格式不正确：${error.message}`);
+    wrapped.statusCode = 500;
+    throw wrapped;
+  }
 }
 
 function writeBooks(books) {
   ensureData();
   backupBooks();
-  fs.writeFileSync(BOOKS_PATH, JSON.stringify(books, null, 2), "utf8");
+  const tempPath = `${BOOKS_PATH}.${process.pid}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(books, null, 2), "utf8");
+  fs.renameSync(tempPath, BOOKS_PATH);
 }
 
 function backupBooks() {
@@ -114,7 +134,7 @@ function defaultCovers() {
 function normalizeBook(input, existing, books) {
   const now = new Date().toISOString().slice(0, 10);
   const book = existing ? { ...existing } : {
-    id: input.id || nextBookId(books),
+    id: nextBookId(books),
     createdAt: now,
   };
   book.title = String(input.title || "").trim();
@@ -176,10 +196,24 @@ function saveDataUrl(dataUrl, bookId, slotKey) {
   const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUrl);
   if (!match) return "";
   const mime = match[1].toLowerCase();
+  if (!ALLOWED_UPLOAD_MIMES.has(mime)) {
+    throw new Error("只支持 JPG、PNG、WebP 或 GIF 图片");
+  }
+
+  let buffer;
+  try {
+    buffer = Buffer.from(match[2], "base64");
+  } catch (error) {
+    throw new Error("图片数据格式不正确");
+  }
+  if (!buffer.length || buffer.length > MAX_UPLOAD_BYTES) {
+    throw new Error(`单张图片不能超过 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB`);
+  }
+
   const ext = mime.includes("png") ? ".png" : mime.includes("webp") ? ".webp" : mime.includes("gif") ? ".gif" : ".jpg";
   const filename = `${sanitizePathPart(bookId)}_${sanitizePathPart(slotKey)}_${crypto.randomBytes(4).toString("hex")}${ext}`;
   const absolute = path.join(COVERS_DIR, filename);
-  fs.writeFileSync(absolute, Buffer.from(match[2], "base64"));
+  fs.writeFileSync(absolute, buffer);
   return `covers/${filename}`;
 }
 
@@ -305,7 +339,7 @@ async function handleApi(req, res) {
 ensureData();
 const server = http.createServer((req, res) => {
   if (req.url.startsWith("/api/")) {
-    handleApi(req, res).catch(error => send(res, 500, JSON.stringify({ error: error.message })));
+    handleApi(req, res).catch(error => send(res, error.statusCode || 500, JSON.stringify({ error: error.message })));
     return;
   }
   serveStatic(req, res);

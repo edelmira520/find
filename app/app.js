@@ -16,17 +16,6 @@ const versionLabels = {
   noCover: "缺封面",
 };
 
-const bookStatusLabels = {
-  active: "正常可用",
-  offline: "平台已下架",
-};
-
-const versionReasons = {
-  custom: "当前使用自制平封",
-  original: "当前使用原版平封，可搭配原版立封",
-  noCover: "尚未设置可展示的平面封面",
-};
-
 function emptyCovers() {
   return {
     custom: { flat: "", threeD: "" },
@@ -50,11 +39,48 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
+function escapeAttr(value) {
+  return escapeHtml(value).replace(/'/g, "&#39;");
+}
+
 function dataUrl(path) {
   if (!path) return "";
   if (/^https?:\/\//i.test(path) || path.startsWith("data:")) return path;
   return `/data/${path}`;
 }
+
+function imageSrc(path) {
+  return escapeAttr(dataUrl(path));
+}
+
+function imageAttrs(path, alt = "", options = {}) {
+  const loading = options.eager ? "" : ' loading="lazy"';
+  const fetchPriority = options.eager ? ' fetchpriority="high"' : "";
+  return `src="${imageSrc(path)}" alt="${escapeAttr(alt)}"${loading}${fetchPriority}`;
+}
+
+let statusTimer = null;
+
+function showStatus(message, type = "info") {
+  const status = $("#appStatus");
+  if (!status) return;
+  clearTimeout(statusTimer);
+  status.textContent = message || "";
+  status.className = `app-status visible ${type}`.trim();
+  if (message && type !== "error") {
+    statusTimer = setTimeout(() => {
+      status.className = "app-status";
+      status.textContent = "";
+    }, 2400);
+  }
+}
+
+function errorMessage(error, fallback = "操作失败") {
+  return error?.message || fallback;
+}
+
+const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
+const ALLOWED_UPLOAD_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
 function absoluteAssetUrl(path) {
   if (!path) return "";
@@ -124,10 +150,6 @@ function slotMap() {
   };
 }
 
-function cloneBook(book) {
-  return JSON.parse(JSON.stringify(book || { covers: emptyCovers(), preferredVersion: "auto" }));
-}
-
 function bookStatus(book) {
   return book?.status === "offline" ? "offline" : "active";
 }
@@ -176,26 +198,24 @@ function displayCovers(book) {
   return { version, flat: "", threeD: "" };
 }
 
-function displayReason(book) {
-  const preferred = normalizePreferredVersion(book?.preferredVersion || "auto");
-  const version = actualVersion(book);
-  if (preferred !== "auto" && version === "noCover") {
-    return "手动选择的版本缺少平面封面";
-  }
-  if (preferred === "custom") return "用户手动选择自制书封";
-  if (preferred === "original") return "用户手动选择原版书封";
-  if (version === "custom") return "自动规则命中：自制平封优先";
-  if (version === "original") return "自动规则命中：无自制平封，使用原版平封";
-  return versionReasons.noCover;
-}
-
 async function loadBooks() {
-  const response = await fetch("/api/books");
-  books = await response.json();
-  renderManageList();
-  if (selectedBookId) {
-    const fresh = books.find(book => book.id === selectedBookId);
-    if (fresh) openBookEditor(fresh);
+  try {
+    const response = await fetch("/api/books");
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || "资料库加载失败");
+    }
+    books = await response.json();
+    showStatus("资料库已加载", "success");
+    renderManageList();
+    if (selectedBookId) {
+      const fresh = books.find(book => book.id === selectedBookId);
+      if (fresh) openBookEditor(fresh);
+    }
+  } catch (error) {
+    books = [];
+    renderManageList();
+    showStatus(`${errorMessage(error, "资料库加载失败")}。请检查 data/books.json 或重启本地服务。`, "error");
   }
 }
 
@@ -351,9 +371,9 @@ function renderCoverStage(result) {
   const statusText = status === "offline" ? statusLabel(status) : result.confirmedManually ? "已手动确认" : statusLabel(status);
   const versionText = book && preferredVersionMissingFlat(book) ? "手选缺平封" : versionLabels[covers.version];
   const flat = covers.flat
-    ? `<img class="flat-cover" src="${dataUrl(covers.flat)}" alt="平面封面">`
+    ? `<img class="flat-cover" ${imageAttrs(covers.flat, "平面封面", { eager: true })}>`
     : `<div class="no-image">空封面</div>`;
-  const three = covers.threeD ? `<img class="three-cover" src="${dataUrl(covers.threeD)}" alt="立体封面">` : "";
+  const three = covers.threeD ? `<img class="three-cover" ${imageAttrs(covers.threeD, "立体封面")}>` : "";
   return `
     <div class="cover-stage">
       ${flat}
@@ -453,7 +473,7 @@ function renderCandidate(candidate, index, result) {
   button.className = "candidate";
   const covers = displayCovers(candidate.book);
   button.innerHTML = `
-    ${covers.flat ? `<img src="${dataUrl(covers.flat)}" alt="">` : `<span class="candidate-empty">无图</span>`}
+    ${covers.flat ? `<img ${imageAttrs(covers.flat, "")}>` : `<span class="candidate-empty">无图</span>`}
     <span>
       <strong>${escapeHtml(candidate.book.title)}</strong>
       <small>${isOffline(candidate.book) ? "已下架 · " : ""}${versionLabels[covers.version]} · ${Math.round(candidate.score * 100)}%</small>
@@ -497,9 +517,9 @@ function openDetail(result) {
   const fullNote = bookNote(book);
   $("#detailContent").innerHTML = `
     <div class="detail-grid">
-      <div class="detail-cover">${covers.flat ? `<img src="${dataUrl(covers.flat)}" alt="平面封面">` : `<div class="no-image large">缺平面封面</div>`}</div>
+      <div class="detail-cover">${covers.flat ? `<img ${imageAttrs(covers.flat, "平面封面")}>` : `<div class="no-image large">缺平面封面</div>`}</div>
       <div class="detail-side">
-        <div class="detail-3d">${covers.threeD ? `<img src="${dataUrl(covers.threeD)}" alt="立体封面">` : `<div class="no-image">无当前立体封</div>`}</div>
+        <div class="detail-3d">${covers.threeD ? `<img ${imageAttrs(covers.threeD, "立体封面")}>` : `<div class="no-image">无当前立体封</div>`}</div>
         <div class="detail-copy-actions">
           ${covers.flat ? `<button class="${offline ? "ghost" : "copy-btn"}" id="copyDetailFlat" type="button">复制平封</button>` : ""}
           ${covers.threeD ? `<button class="${offline ? "ghost" : "copy-btn"}" id="copyDetailThree" type="button">复制立封</button>` : ""}
@@ -535,7 +555,7 @@ function renderManageList() {
       const covers = displayCovers(book);
       const offline = isOffline(book);
       const noteBadge = noteBadgeText(book);
-      const thumb = covers.flat ? `<img src="${dataUrl(covers.flat)}" alt="">` : `<div class="thumb-placeholder">无图</div>`;
+      const thumb = covers.flat ? `<img ${imageAttrs(covers.flat, "")}>` : `<div class="thumb-placeholder">无图</div>`;
       row.innerHTML = `
         ${thumb}
         <span>
@@ -684,6 +704,13 @@ function updateUploadSlotStates(book, version) {
 }
 
 async function fileToDataUrl(file) {
+  if (!ALLOWED_UPLOAD_TYPES.has(file.type)) {
+    throw new Error("只支持 JPG、PNG、WebP 或 GIF 图片");
+  }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    throw new Error(`单张图片不能超过 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB`);
+  }
+
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
@@ -694,31 +721,42 @@ async function fileToDataUrl(file) {
 
 async function saveBook(event) {
   event.preventDefault();
+  const saveButton = $("#saveBook");
+  const originalText = saveButton.textContent;
+  saveButton.disabled = true;
+  saveButton.textContent = "保存中…";
   const book = collectBookFromForm();
   const uploads = { ...uploadState };
   const isEdit = Boolean(book.id);
   const pendingReturnTitle = returnToMissingTitle;
-  const response = await fetch(isEdit ? `/api/books/${encodeURIComponent(book.id)}` : "/api/books", {
-    method: isEdit ? "PUT" : "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ book, uploads }),
-  });
-  if (!response.ok) {
-    const error = await response.json();
-    alert(error.error || "保存失败");
-    return;
-  }
-  const saved = await response.json();
-  await loadBooks();
-  openBookEditor(saved);
-  if (pendingReturnTitle) {
-    const index = currentResults.findIndex(result => normalize(result.inputTitle) === normalize(pendingReturnTitle));
-    if (index >= 0) {
-      currentResults[index] = { inputTitle: pendingReturnTitle, status: isOffline(saved) ? "offline" : "matched", book: saved, candidates: [{ book: saved, score: 1 }] };
-      renderResults();
-      $$(".tab").find(tab => tab.dataset.view === "search").click();
+  try {
+    const response = await fetch(isEdit ? `/api/books/${encodeURIComponent(book.id)}` : "/api/books", {
+      method: isEdit ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ book, uploads }),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || "保存失败");
     }
-    returnToMissingTitle = "";
+    const saved = await response.json();
+    await loadBooks();
+    openBookEditor(saved);
+    showStatus(`已保存《${saved.title}》`, "success");
+    if (pendingReturnTitle) {
+      const index = currentResults.findIndex(result => normalize(result.inputTitle) === normalize(pendingReturnTitle));
+      if (index >= 0) {
+        currentResults[index] = { inputTitle: pendingReturnTitle, status: isOffline(saved) ? "offline" : "matched", book: saved, candidates: [{ book: saved, score: 1 }] };
+        renderResults();
+        $$(".tab").find(tab => tab.dataset.view === "search").click();
+      }
+      returnToMissingTitle = "";
+    }
+  } catch (error) {
+    showStatus(errorMessage(error, "保存失败"), "error");
+  } finally {
+    saveButton.disabled = false;
+    saveButton.textContent = originalText;
   }
 }
 
@@ -728,17 +766,23 @@ async function deleteCurrentBook() {
   const response = await fetch(`/api/books/${encodeURIComponent(editingBook.id)}`, { method: "DELETE" });
   if (!response.ok) {
     const error = await response.json();
-    alert(error.error || "删除失败");
+    showStatus(error.error || "删除失败", "error");
     return;
   }
+  const deletedTitle = editingBook.title;
   resetEditor();
   await loadBooks();
+  showStatus(`已删除《${deletedTitle}》`, "success");
 }
 
 async function createBatchDrafts(event) {
   event.preventDefault();
+  const submitButton = event.submitter || $("#batchForm button[type='submit']");
+  const originalText = submitButton.textContent;
   const titles = extractTitles($("#batchTitles").value);
   if (!titles.length) return;
+  submitButton.disabled = true;
+  submitButton.textContent = "生成中…";
   const pastedCounts = titles.reduce((acc, title) => {
     const key = normalize(title);
     acc[key] = acc[key] || { title, count: 0 };
@@ -752,21 +796,30 @@ async function createBatchDrafts(event) {
   if (repeatedInPaste.length) warnings.push(`本次粘贴重复：\n${repeatedInPaste.join("\n")}`);
   if (alreadyExists.length) warnings.push(`资料库已存在：\n${alreadyExists.join("\n")}`);
   if (warnings.length && !confirm(`${warnings.join("\n\n")}\n\n仍然创建这些草稿吗？`)) {
+    submitButton.disabled = false;
+    submitButton.textContent = originalText;
     return;
   }
-  const response = await fetch("/api/books/batch", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ titles }),
-  });
-  if (!response.ok) {
-    const error = await response.json();
-    alert(error.error || "批量新增失败");
-    return;
+  try {
+    const response = await fetch("/api/books/batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ titles }),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || "批量新增失败");
+    }
+    $("#batchDialog").close();
+    $("#batchTitles").value = "";
+    await loadBooks();
+    showStatus(`已生成 ${titles.length} 本草稿`, "success");
+  } catch (error) {
+    showStatus(errorMessage(error, "批量新增失败"), "error");
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = originalText;
   }
-  $("#batchDialog").close();
-  $("#batchTitles").value = "";
-  await loadBooks();
 }
 
 function bindEvents() {
@@ -786,7 +839,15 @@ function bindEvents() {
   });
   $("#addManualTitle").addEventListener("click", () => {
     const title = $("#manualTitle").value.trim();
-    if (title) recognizedTitles.push(title);
+    if (title) {
+      const key = normalize(title);
+      const exists = recognizedTitles.some(item => normalize(item) === key);
+      if (exists) {
+        showStatus(`《${title}》已在识别列表中`, "error");
+      } else {
+        recognizedTitles.push(title);
+      }
+    }
     $("#manualTitle").value = "";
     renderTitlePreview();
   });
@@ -821,6 +882,9 @@ function bindEvents() {
   $("#bookNote").addEventListener("input", updateActualVersionPreview);
   $("#bookTitle").addEventListener("input", updateActualVersionPreview);
   $("#batchDrafts").addEventListener("click", () => $("#batchDialog").showModal());
+  $$("[data-close-batch]").forEach(button => {
+    button.addEventListener("click", () => $("#batchDialog").close());
+  });
   $("#batchForm").addEventListener("submit", createBatchDrafts);
   $("#closeDetail").addEventListener("click", () => $("#detailDialog").close());
 
@@ -833,14 +897,30 @@ function bindEvents() {
     const setDisplayButton = slot.querySelector(".set-display");
     const setFile = async file => {
       if (!file) return;
-      const dataUrlValue = await fileToDataUrl(file);
+      let dataUrlValue;
+      try {
+        dataUrlValue = await fileToDataUrl(file);
+      } catch (error) {
+        showStatus(error.message || "图片读取失败", "error");
+        fileInput.value = "";
+        return;
+      }
       uploadState[key] = { dataUrl: dataUrlValue };
       urlInput.value = "";
       img.src = dataUrlValue;
       slot.classList.add("has-image");
       updateActualVersionPreview();
     };
+    zone.setAttribute("role", "button");
+    zone.setAttribute("tabindex", "0");
+    zone.setAttribute("aria-label", `${slot.querySelector("h3")?.textContent || "封面"}：选择或拖拽图片`);
     zone.addEventListener("click", () => fileInput.click());
+    zone.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        fileInput.click();
+      }
+    });
     fileInput.addEventListener("change", () => setFile(fileInput.files[0]));
     urlInput.addEventListener("input", () => {
       delete uploadState[key];

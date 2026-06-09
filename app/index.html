@@ -19,6 +19,8 @@
       </nav>
     </header>
 
+    <div id="appStatus" class="app-status" role="status" aria-live="polite"></div>
+
     <main>
       <section id="searchView" class="view active">
         <section class="search-board">
@@ -27,7 +29,7 @@
               <h2>批量查找</h2>
               <button id="clearSearch" class="ghost">清空</button>
             </div>
-            <textarea id="pasteInput" placeholder="粘贴文本，例如：本周要找《高效演讲》《幸福的方法》、活着，还有 大脑效率革命"></textarea>
+            <textarea id="pasteInput" name="pasteInput" autocomplete="off" placeholder="粘贴文本，例如：本周要找《高效演讲》《幸福的方法》、活着，还有 大脑效率革命"></textarea>
             <div class="actions">
               <button id="runMatch" class="primary strong" disabled>开始匹配</button>
             </div>
@@ -36,12 +38,12 @@
           <div id="previewPanel" class="preview-panel">
             <div class="panel-head compact">
               <h2>识别书名</h2>
-              <span id="previewCount" class="muted">识别到 0 本</span>
+              <span id="previewCount" class="muted" aria-live="polite">识别到 0 本</span>
             </div>
-            <p class="preview-hint">请确认识别出的书名，可直接编辑或删除。</p>
+            <p class="preview-hint">左侧会自动识别书名；漏掉的书可在下方手动补充，都会一起参与匹配。</p>
             <div id="titleChips" class="chips empty"></div>
             <div class="inline-add">
-              <input id="manualTitle" type="text" placeholder="手动补充书名">
+              <input id="manualTitle" name="manualTitle" type="text" autocomplete="off" placeholder="手动补充书名">
               <button id="addManualTitle" class="ghost">添加</button>
             </div>
           </div>
@@ -51,7 +53,7 @@
           <div class="result-head">
             <div>
               <h2>封面墙</h2>
-              <div id="matchSummary" class="summary-line"></div>
+              <div id="matchSummary" class="summary-line" aria-live="polite"></div>
             </div>
             <div class="filters" aria-label="结果筛选">
               <button class="filter active" data-filter="all">显示全部</button>
@@ -74,7 +76,7 @@
                 <button id="newBook" class="primary">新增</button>
               </div>
             </div>
-            <input id="manageSearch" type="search" placeholder="搜索书名">
+            <input id="manageSearch" name="manageSearch" type="search" autocomplete="off" placeholder="搜索书名">
             <div id="bookList" class="book-list"></div>
           </aside>
 
@@ -90,20 +92,20 @@
               <input type="hidden" id="bookId">
               <label class="field">
                 <span>书名</span>
-                <input id="bookTitle" required>
+                <input id="bookTitle" name="bookTitle" autocomplete="off" required>
               </label>
               <label class="field">
                 <span>书籍状态</span>
-                <select id="bookStatus">
+                <select id="bookStatus" name="bookStatus" autocomplete="off">
                   <option value="active">正常可用</option>
                   <option value="offline">平台已下架</option>
                 </select>
               </label>
               <label class="field">
                 <span>备注</span>
-                <textarea id="bookNote" placeholder="Excel M列备注，可记录内部说明"></textarea>
+                <textarea id="bookNote" name="bookNote" autocomplete="off" placeholder="Excel M列备注，可记录内部说明"></textarea>
               </label>
-              <input id="preferredVersion" type="hidden" value="auto">
+              <input id="preferredVersion" name="preferredVersion" type="hidden" value="auto">
               <div class="upload-grid">
                 <div class="upload-slot" data-slot="custom_flat">
                   <div class="slot-head">
@@ -111,8 +113,8 @@
                     <button class="clear-slot" type="button">清空</button>
                   </div>
                   <div class="drop-zone">拖拽图片到这里，或点击选择</div>
-                  <input type="file" accept="image/*">
-                  <input class="cover-path" type="text" placeholder="或输入图片链接">
+                  <input type="file" accept="image/jpeg,image/png,image/webp,image/gif">
+                  <input class="cover-path" name="coverPath" type="url" inputmode="url" autocomplete="off" placeholder="或输入图片链接">
                   <img alt="">
                   <div class="slot-status">缺失</div>
                   <button class="set-display" type="button">设为展示</button>
@@ -123,8 +125,8 @@
                     <button class="clear-slot" type="button">清空</button>
                   </div>
                   <div class="drop-zone">拖拽图片到这里，或点击选择</div>
-                  <input type="file" accept="image/*">
-                  <input class="cover-path" type="text" placeholder="或输入图片链接">
+                  <input type="file" accept="image/jpeg,image/png,image/webp,image/gif">
+                  <input class="cover-path" name="coverPath" type="url" inputmode="url" autocomplete="off" placeholder="或输入图片链接">
                   <img alt="">
                   <div class="slot-status">缺失</div>
                   <button class="set-display" type="button">设为展示</button>
@@ -135,8 +137,8 @@
                     <button class="clear-slot" type="button">清空</button>
                   </div>
                   <div class="drop-zone">拖拽图片到这里，或点击选择</div>
-                  <input type="file" accept="image/*">
-                  <input class="cover-path" type="text" placeholder="或输入图片链接">
+                  <input type="file" accept="image/jpeg,image/png,image/webp,image/gif">
+                  <input class="cover-path" name="coverPath" type="url" inputmode="url" autocomplete="off" placeholder="或输入图片链接">
                   <img alt="">
                   <div class="slot-status">缺失</div>
                 </div>
@@ -165,12 +167,12 @@
     <form method="dialog" id="batchForm">
       <div class="dialog-head">
         <h2>批量新增草稿</h2>
-        <button class="icon" value="cancel" aria-label="关闭">×</button>
+        <button class="icon" value="cancel" type="button" data-close-batch aria-label="关闭">×</button>
       </div>
-      <textarea id="batchTitles" placeholder="一行一本，或用顿号/逗号分隔"></textarea>
+      <textarea id="batchTitles" name="batchTitles" autocomplete="off" placeholder="一行一本，或用顿号/逗号分隔"></textarea>
       <div class="dialog-actions">
         <span></span>
-        <button value="cancel" class="ghost">取消</button>
+        <button value="cancel" class="ghost" type="button" data-close-batch>取消</button>
         <button class="primary" type="submit">生成草稿</button>
       </div>
     </form>
