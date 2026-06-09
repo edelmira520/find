@@ -140,13 +140,8 @@ function bookNote(book) {
   return String(book?.note || "").trim();
 }
 
-function prefersOriginalFromNote(book) {
-  return bookNote(book).replace(/\s+/g, "").includes("优先使用原版书封");
-}
-
 function noteBadgeText(book) {
-  if (!bookNote(book)) return "";
-  return prefersOriginalFromNote(book) ? "备注：用原版" : "有备注";
+  return bookNote(book) ? "有备注" : "";
 }
 
 function hasFlat(book, version) {
@@ -158,8 +153,12 @@ function preferredVersionMissingFlat(book) {
   return preferred !== "auto" && ["custom", "original"].includes(preferred) && !hasFlat(book, preferred);
 }
 
+function normalizePreferredVersion(value) {
+  return ["auto", "custom", "original"].includes(value) ? value : "auto";
+}
+
 function actualVersion(book) {
-  const preferred = book?.preferredVersion || "auto";
+  const preferred = normalizePreferredVersion(book?.preferredVersion || "auto");
   const covers = { ...emptyCovers(), ...(book?.covers || {}) };
   if (["custom", "original"].includes(preferred)) {
     return covers[preferred]?.flat ? preferred : "noCover";
@@ -178,14 +177,15 @@ function displayCovers(book) {
 }
 
 function displayReason(book) {
-  const preferred = book?.preferredVersion || "auto";
+  const preferred = normalizePreferredVersion(book?.preferredVersion || "auto");
   const version = actualVersion(book);
   if (preferred !== "auto" && version === "noCover") {
-    return `手动选择了 ${versionLabels[preferred]}，但该版本没有平面封面`;
+    return "手动选择的版本缺少平面封面";
   }
-  if (preferred !== "auto") return `手动选择 ${versionLabels[preferred]}`;
-  if (version === "custom") return "auto 规则命中：自制平封优先";
-  if (version === "original") return "auto 规则命中：无自制平封，使用原版平封";
+  if (preferred === "custom") return "用户手动选择自制书封";
+  if (preferred === "original") return "用户手动选择原版书封";
+  if (version === "custom") return "自动规则命中：自制平封优先";
+  if (version === "original") return "自动规则命中：无自制平封，使用原版平封";
   return versionReasons.noCover;
 }
 
@@ -488,7 +488,7 @@ function openDetail(result) {
   const manualMissing = preferredVersionMissingFlat(book);
   const offline = isOffline(book);
   const mismatchNote = covers.version === "custom" && original3d
-    ? `<div class="note">当前规则展示自制平封，因此不搭配原版立封，避免错配。</div>`
+    ? `<div class="note">自制平封展示中，原版立封不跟随。</div>`
     : "";
   const manualMissingNote = manualMissing
     ? `<div class="note danger-note">手动选择的版本缺少平面封面。</div>`
@@ -505,7 +505,6 @@ function openDetail(result) {
           ${covers.threeD ? `<button class="${offline ? "ghost" : "copy-btn"}" id="copyDetailThree" type="button">复制立封</button>` : ""}
           ${covers.flat ? `<button class="ghost" id="copyDetailLink" type="button">复制图片链接</button>` : ""}
         </div>
-        <div class="actual-version">当前实际展示版本：${versionLabels[covers.version]}。原因：${escapeHtml(displayReason(book))}</div>
         ${fullNote ? `<div class="note full-note"><strong>备注</strong><p>${escapeHtml(fullNote)}</p></div>` : ""}
         ${offlineNote}
         ${manualMissingNote}
@@ -560,7 +559,7 @@ function openBookEditor(book, presetTitle = "") {
   $("#bookTitle").value = book ? book.title : presetTitle;
   $("#bookStatus").value = bookStatus(book);
   $("#bookNote").value = bookNote(book);
-  $("#preferredVersion").value = book?.preferredVersion || "auto";
+  $("#preferredVersion").value = normalizePreferredVersion(book?.preferredVersion || "auto");
   $("#deleteBook").style.visibility = book ? "visible" : "hidden";
   fillUploadSlots(book || { covers: emptyCovers() });
   updateActualVersionPreview();
@@ -619,7 +618,7 @@ function collectBookFromForm() {
     title: $("#bookTitle").value.trim(),
     note: $("#bookNote").value.trim(),
     status: $("#bookStatus").value,
-    preferredVersion: $("#preferredVersion").value,
+    preferredVersion: normalizePreferredVersion($("#preferredVersion").value),
     covers,
   };
 }
@@ -634,12 +633,54 @@ function updateActualVersionPreview() {
     if (uploadState[key]) book.covers[version][slot] = "__pending_upload__";
   }
   const version = actualVersion(book);
-  const statusText = book.status === "offline" ? "平台已下架" : "正常可用";
-  $("#actualVersion").textContent = `书籍状态：${statusText}。当前实际展示版本：${versionLabels[version]}。原因：${displayReason(book)}`;
-  const preferred = book.preferredVersion;
-  const showWarning = preferred !== "auto" && !hasFlat(book, preferred);
-  $("#versionWarning").classList.toggle("hidden", !showWarning);
-  $("#versionWarning").textContent = showWarning ? `警告：手动选择了 ${versionLabels[preferred]}，但该版本没有平面封面，保存后会显示缺封面。` : "";
+  updateUploadSlotStates(book, version);
+}
+
+function setSlotState(key, text, options = {}) {
+  const slot = $(`.upload-slot[data-slot="${key}"]`);
+  if (!slot) return;
+  const status = slot.querySelector(".slot-status");
+  const button = slot.querySelector(".set-display");
+  slot.classList.toggle("is-current", Boolean(options.current));
+  slot.classList.toggle("is-missing", Boolean(options.missing));
+  slot.classList.toggle("is-standby", Boolean(options.standby));
+  if (status) status.textContent = text;
+  if (button) {
+    button.hidden = !options.canSet;
+    button.disabled = !options.canSet;
+  }
+}
+
+function updateUploadSlotStates(book, version) {
+  const preferred = normalizePreferredVersion(book.preferredVersion || "auto");
+  const covers = book.covers || emptyCovers();
+  const hasCustom = Boolean(covers.custom?.flat);
+  const hasOriginal = Boolean(covers.original?.flat);
+  const hasOriginal3d = Boolean(covers.original?.threeD);
+
+  if (!hasCustom) {
+    setSlotState("custom_flat", "缺失", { missing: true });
+  } else if (version === "custom") {
+    setSlotState("custom_flat", "✓ 展示中", { current: true });
+  } else {
+    setSlotState("custom_flat", "备用", { standby: true, canSet: true });
+  }
+
+  if (!hasOriginal) {
+    setSlotState("original_flat", "缺失", { missing: true });
+  } else if (version === "original") {
+    setSlotState("original_flat", "✓ 展示中", { current: true });
+  } else {
+    setSlotState("original_flat", "备用", { standby: true, canSet: true });
+  }
+
+  if (!hasOriginal3d) {
+    setSlotState("original_3d", "缺失", { missing: true });
+  } else if (version === "original") {
+    setSlotState("original_3d", "跟随展示", { current: true });
+  } else {
+    setSlotState("original_3d", "备用", { standby: true });
+  }
 }
 
 async function fileToDataUrl(file) {
@@ -776,7 +817,6 @@ function bindEvents() {
   $("#resetEditor").addEventListener("click", resetEditor);
   $("#bookForm").addEventListener("submit", saveBook);
   $("#deleteBook").addEventListener("click", deleteCurrentBook);
-  $("#preferredVersion").addEventListener("change", updateActualVersionPreview);
   $("#bookStatus").addEventListener("change", updateActualVersionPreview);
   $("#bookNote").addEventListener("input", updateActualVersionPreview);
   $("#bookTitle").addEventListener("input", updateActualVersionPreview);
@@ -790,6 +830,7 @@ function bindEvents() {
     const fileInput = slot.querySelector('input[type="file"]');
     const urlInput = slot.querySelector(".cover-path");
     const img = slot.querySelector("img");
+    const setDisplayButton = slot.querySelector(".set-display");
     const setFile = async file => {
       if (!file) return;
       const dataUrlValue = await fileToDataUrl(file);
@@ -820,6 +861,14 @@ function bindEvents() {
       slot.classList.remove("has-image");
       updateActualVersionPreview();
     });
+    if (setDisplayButton) {
+      setDisplayButton.addEventListener("click", () => {
+        const [version] = slotMap()[key] || [];
+        if (!version) return;
+        $("#preferredVersion").value = version;
+        updateActualVersionPreview();
+      });
+    }
     zone.addEventListener("dragover", event => {
       event.preventDefault();
       zone.classList.add("dragging");

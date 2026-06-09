@@ -145,7 +145,11 @@ function localCoverPaths(book) {
 }
 
 function isInsideCoversDir(absolute) {
-  const relative = path.relative(COVERS_DIR, absolute);
+  return isInsideDir(COVERS_DIR, absolute);
+}
+
+function isInsideDir(baseDir, absolutePath) {
+  const relative = path.relative(baseDir, absolutePath);
   return relative && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
@@ -209,8 +213,7 @@ function serveStatic(req, res) {
 
   const base = url.pathname.startsWith("/data/") ? DATA_DIR : APP_DIR;
   const resolved = path.resolve(filePath);
-  const relative = path.relative(base, resolved);
-  if (!relative || relative.startsWith("..") || path.isAbsolute(relative) || !fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
+  if (!isInsideDir(base, resolved) || !fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
     send(res, 404, "Not found", "text/plain; charset=utf-8");
     return;
   }

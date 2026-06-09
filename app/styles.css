@@ -630,24 +630,11 @@ select {
   font-weight: 650;
 }
 
-.actual-version,
-.version-warning,
 .note {
   padding: 10px 12px;
   border-radius: 7px;
   margin-bottom: 12px;
   line-height: 1.5;
-}
-
-.actual-version {
-  background: #edf8f5;
-  color: var(--primary-dark);
-}
-
-.version-warning {
-  background: var(--warning-bg);
-  color: #8a4b0f;
-  border: 1px solid #f0d28a;
 }
 
 .note {
@@ -688,6 +675,15 @@ select {
   border-radius: 8px;
   padding: 10px;
   background: #fffaf2;
+}
+
+.upload-slot.is-current {
+  border-color: rgba(17, 106, 91, 0.5);
+  background: #f4fbf8;
+}
+
+.upload-slot.is-missing {
+  background: #fffaf7;
 }
 
 .slot-head {
@@ -744,6 +740,44 @@ select {
 
 .upload-slot.has-image img {
   display: block;
+}
+
+.slot-status {
+  margin-top: 8px;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  background: #f7f1e8;
+  text-align: center;
+}
+
+.upload-slot.is-current .slot-status {
+  color: #116a5b;
+  background: #e8f6f2;
+}
+
+.upload-slot.is-missing .slot-status {
+  color: #9a6a18;
+  background: #fff0c2;
+}
+
+.upload-slot.is-standby .slot-status {
+  color: #5d5449;
+}
+
+.set-display {
+  margin-top: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  font-size: 12px;
+  border-color: var(--line);
+  background: #fff;
+}
+
+.set-display[hidden] {
+  display: none;
 }
 
 .dialog-actions {

@@ -101,18 +101,9 @@
               </label>
               <label class="field">
                 <span>备注</span>
-                <textarea id="bookNote" placeholder="Excel M列备注，可记录优先使用原版书封等说明"></textarea>
+                <textarea id="bookNote" placeholder="Excel M列备注，可记录内部说明"></textarea>
               </label>
-              <label class="field">
-                <span>preferredVersion</span>
-                <select id="preferredVersion">
-                  <option value="auto">auto：自制 > 原版</option>
-                  <option value="custom">custom：强制自制版</option>
-                  <option value="original">original：强制原版</option>
-                </select>
-              </label>
-              <div id="actualVersion" class="actual-version"></div>
-              <div id="versionWarning" class="version-warning hidden"></div>
+              <input id="preferredVersion" type="hidden" value="auto">
               <div class="upload-grid">
                 <div class="upload-slot" data-slot="custom_flat">
                   <div class="slot-head">
@@ -123,6 +114,8 @@
                   <input type="file" accept="image/*">
                   <input class="cover-path" type="text" placeholder="或输入图片链接">
                   <img alt="">
+                  <div class="slot-status">缺失</div>
+                  <button class="set-display" type="button">设为展示</button>
                 </div>
                 <div class="upload-slot" data-slot="original_flat">
                   <div class="slot-head">
@@ -133,6 +126,8 @@
                   <input type="file" accept="image/*">
                   <input class="cover-path" type="text" placeholder="或输入图片链接">
                   <img alt="">
+                  <div class="slot-status">缺失</div>
+                  <button class="set-display" type="button">设为展示</button>
                 </div>
                 <div class="upload-slot" data-slot="original_3d">
                   <div class="slot-head">
@@ -143,6 +138,7 @@
                   <input type="file" accept="image/*">
                   <input class="cover-path" type="text" placeholder="或输入图片链接">
                   <img alt="">
+                  <div class="slot-status">缺失</div>
                 </div>
               </div>
               <div class="dialog-actions">

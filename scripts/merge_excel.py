@@ -20,7 +20,6 @@ COVER_COLUMNS = {
 }
 ACTION_KEYS = ["add", "fill", "conflict", "offline_conflict", "duplicate_conflict", "note_conflict", "skip"]
 OFFLINE_KEYWORDS = ["下线", "下架", "已下", "停用", "不可用"]
-PREFER_ORIGINAL_KEYWORD = "优先使用原版书封"
 
 
 def clean_text(value):
@@ -40,9 +39,8 @@ def resolve_status(value):
     return "offline" if any(keyword in text for keyword in OFFLINE_KEYWORDS) else "active"
 
 
-def resolve_preferred_version(note):
-    compact = re.sub(r"\s+", "", clean_text(note))
-    return "original" if PREFER_ORIGINAL_KEYWORD in compact else "auto"
+def default_preferred_version():
+    return "auto"
 
 
 def normalize_title(value):
@@ -197,7 +195,7 @@ def read_excel_rows(excel_path, run_dir, data_dir):
             "title": title,
             "note": note,
             "status": resolve_status(note),
-            "preferredVersion": resolve_preferred_version(note),
+            "preferredVersion": default_preferred_version(),
             "normalizedTitle": normalize_title(title),
             "covers": covers,
             "incoming": incoming,
@@ -251,8 +249,7 @@ def classify_row(row, existing_groups, duplicate_new_keys, duplicate_existing_ke
 
     old_note = clean_text(existing.get("note", ""))
     new_note = clean_text(row.get("note", ""))
-    if old_note and new_note and old_note != new_note:
-        return "note_conflict", existing, "新旧备注都存在且不同，不能自动覆盖", [], new_slots
+    note_conflict = old_note and new_note and old_note != new_note
 
     fill_slots = []
     conflict_slots = []
@@ -264,6 +261,11 @@ def classify_row(row, existing_groups, duplicate_new_keys, duplicate_existing_ke
 
     if conflict_slots:
         return "conflict", existing, "同一封面位新旧资料都存在，默认不能覆盖", fill_slots, conflict_slots
+    if note_conflict:
+        reason = "新旧备注都存在且不同，不能自动覆盖"
+        if fill_slots:
+            reason += "；可安全补充缺失封面"
+        return "note_conflict", existing, reason, fill_slots, []
     if fill_slots or (new_note and not old_note):
         return "fill", existing, "旧资料缺少部分封面或备注，新 Excel 可以补充", fill_slots, []
     return "skip", existing, "没有新信息", [], []
@@ -484,17 +486,15 @@ def apply_plan(plan, books, data_dir):
                 "updatedAt": now,
             })
             applied["add"] += 1
-        elif item["action"] == "fill":
+        elif item["action"] in ["fill", "note_conflict"]:
             book = by_id.get(item["existingBookId"])
             if not book:
                 applied["skipped"] += 1
                 continue
             changed = False
             new_note = clean_text(item.get("newNote", ""))
-            if new_note and not clean_text(book.get("note", "")):
+            if item["action"] == "fill" and new_note and not clean_text(book.get("note", "")):
                 book["note"] = new_note
-                if item.get("newPreferredVersion") == "original" and book.get("preferredVersion", "auto") == "auto":
-                    book["preferredVersion"] = "original"
                 changed = True
             for slot in item["fillSlots"]:
                 if get_cover(book.get("covers", {}), slot):

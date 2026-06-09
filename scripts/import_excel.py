@@ -18,7 +18,6 @@ COVER_COLUMNS = {
     10: ("original", "threeD", "original_3d"),
 }
 OFFLINE_KEYWORDS = ["下线", "下架", "已下", "停用", "不可用"]
-PREFER_ORIGINAL_KEYWORD = "优先使用原版书封"
 
 
 def clean_text(value):
@@ -38,9 +37,8 @@ def resolve_status(value):
     return "offline" if any(keyword in text for keyword in OFFLINE_KEYWORDS) else "active"
 
 
-def resolve_preferred_version(note):
-    compact = re.sub(r"\s+", "", clean_text(note))
-    return "original" if PREFER_ORIGINAL_KEYWORD in compact else "auto"
+def default_preferred_version():
+    return "auto"
 
 
 def slug_id(index):
@@ -355,7 +353,7 @@ def convert(excel_path, output_dir):
             "title": title,
             "note": note,
             "status": resolve_status(note),
-            "preferredVersion": resolve_preferred_version(note),
+            "preferredVersion": default_preferred_version(),
             "covers": {
                 "custom": {"flat": "", "threeD": ""},
                 "original": {"flat": "", "threeD": ""},
