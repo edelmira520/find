@@ -359,7 +359,6 @@ def convert(excel_path, output_dir):
             "covers": {
                 "custom": {"flat": "", "threeD": ""},
                 "original": {"flat": "", "threeD": ""},
-                "fallback": {"flat": "", "threeD": ""},
             },
             "createdAt": today,
             "updatedAt": today,

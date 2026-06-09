@@ -31,7 +31,6 @@ function emptyCovers() {
   return {
     custom: { flat: "", threeD: "" },
     original: { flat: "", threeD: "" },
-    fallback: { flat: "", threeD: "" },
   };
 }
 
@@ -556,7 +555,7 @@ function openBookEditor(book, presetTitle = "") {
   returnToMissingTitle = presetTitle;
   Object.keys(uploadState).forEach(key => delete uploadState[key]);
   $("#dialogTitle").textContent = book ? "编辑书籍" : "新增书籍";
-  $("#editorHint").textContent = book ? "维护四个封面位和展示规则。" : "先保存草稿，再逐步补齐封面。";
+  $("#editorHint").textContent = book ? "维护三个封面位和展示规则。" : "先保存草稿，再逐步补齐封面。";
   $("#bookId").value = book ? book.id : "";
   $("#bookTitle").value = book ? book.title : presetTitle;
   $("#bookStatus").value = bookStatus(book);

@@ -53,7 +53,6 @@ def empty_covers():
     return {
         "custom": {"flat": "", "threeD": ""},
         "original": {"flat": "", "threeD": ""},
-        "fallback": {"flat": "", "threeD": ""},
     }
 
 
@@ -421,7 +420,7 @@ def build_preview_html(summary, plan, run_dir):
     .compare {{ display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }}
     section {{ min-width: 0; }}
     section h3 {{ font-size: 15px; margin-bottom: 8px; }}
-    .covers {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }}
+    .covers {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }}
     .cover-cell span {{ display: block; color: #746f66; font-size: 12px; margin-bottom: 5px; }}
     img, .missing {{ width: 100%; aspect-ratio: 2 / 3; object-fit: contain; background: #f5ecdf; border: 1px solid #e2d8ca; border-radius: 6px; }}
     .missing {{ display: grid; place-items: center; color: #9a8d7b; border-style: dashed; font-size: 12px; }}

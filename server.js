@@ -108,7 +108,6 @@ function defaultCovers() {
   return {
     custom: { flat: "", threeD: "" },
     original: { flat: "", threeD: "" },
-    fallback: { flat: "", threeD: "" },
   };
 }
 
@@ -119,18 +118,18 @@ function normalizeBook(input, existing, books) {
     createdAt: now,
   };
   book.title = String(input.title || "").trim();
-  book.note = String(input.note || book.note || "").trim();
+  book.note = Object.prototype.hasOwnProperty.call(input, "note")
+    ? String(input.note || "").trim()
+    : String(book.note || "").trim();
   book.status = ["active", "offline"].includes(input.status) ? input.status : (book.status || "active");
   book.preferredVersion = ["auto", "custom", "original"].includes(input.preferredVersion)
     ? input.preferredVersion
     : "auto";
+  const inputCovers = input.covers || {};
   book.covers = {
-    ...defaultCovers(),
-    ...(input.covers || {}),
+    custom: { ...defaultCovers().custom, ...(inputCovers.custom || {}) },
+    original: { ...defaultCovers().original, ...(inputCovers.original || {}) },
   };
-  book.covers.custom = { ...defaultCovers().custom, ...(book.covers.custom || {}) };
-  book.covers.original = { ...defaultCovers().original, ...(book.covers.original || {}) };
-  book.covers.fallback = { ...defaultCovers().fallback, ...(book.covers.fallback || {}) };
   book.updatedAt = now;
   return book;
 }
@@ -142,8 +141,6 @@ function localCoverPaths(book) {
     covers.custom && covers.custom.threeD,
     covers.original && covers.original.flat,
     covers.original && covers.original.threeD,
-    covers.fallback && covers.fallback.flat,
-    covers.fallback && covers.fallback.threeD,
   ].filter(value => value && !/^https?:\/\//i.test(value) && !String(value).startsWith("data:"));
 }
 
@@ -212,7 +209,8 @@ function serveStatic(req, res) {
 
   const base = url.pathname.startsWith("/data/") ? DATA_DIR : APP_DIR;
   const resolved = path.resolve(filePath);
-  if (!resolved.startsWith(base) || !fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
+  const relative = path.relative(base, resolved);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative) || !fs.existsSync(resolved) || fs.statSync(resolved).isDirectory()) {
     send(res, 404, "Not found", "text/plain; charset=utf-8");
     return;
   }
