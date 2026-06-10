@@ -10,6 +10,7 @@ let activeResultFilter = "all";
 let editingBook = null;
 let selectedBookId = "";
 let returnToMissingTitle = "";
+let formDirty = false;
 const uploadState = {};
 
 const $ = selector => document.querySelector(selector);
@@ -82,6 +83,18 @@ function showStatus(message, type = "info") {
 
 function errorMessage(error, fallback = "操作失败") {
   return error?.message || fallback;
+}
+
+function markDirty() {
+  formDirty = true;
+}
+
+function clearDirty() {
+  formDirty = false;
+}
+
+function confirmLeaveDirty() {
+  return !formDirty || confirm("当前编辑尚未保存，确定离开吗？");
 }
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
@@ -176,6 +189,13 @@ function setCurrentSpeaker(speaker) {
   showStatus(`已切换到讲书人：${currentSpeaker.name}`, "success");
 }
 
+async function startNewMaterial() {
+  if (!confirmLeaveDirty()) return;
+  const speaker = await chooseTargetSpeaker("新增素材");
+  if (!speaker) return;
+  openBookEditor(null, "", speaker);
+}
+
 async function loadSpeakers() {
   try {
     const response = await fetch("/api/speakers");
@@ -235,7 +255,7 @@ async function chooseTargetSpeaker(actionText = "新增书籍") {
   if (!isAllSpeaker()) return currentSpeaker;
   return openSpeakerDialog({
     title: "选择讲书人",
-    hint: `${actionText}需要归属到一个具体讲书人。可以选择已有讲书人，也可以直接新增。`,
+    hint: `${actionText}需要先选择归属讲书人。`,
     createOnly: false,
   });
 }
@@ -243,7 +263,11 @@ async function chooseTargetSpeaker(actionText = "新增书籍") {
 function fillSpeakerDialogOptions() {
   const select = $("#speakerDialogSelect");
   if (!select) return;
-  select.innerHTML = `<option value="">不选择已有，直接新增</option>`;
+  select.innerHTML = "";
+  if (!speakers.length) {
+    select.innerHTML = `<option value="">暂无讲书人，请新增</option>`;
+    return;
+  }
   speakers.forEach(speaker => {
     const option = document.createElement("option");
     option.value = speaker.id;
@@ -258,14 +282,23 @@ function openSpeakerDialog(options = {}) {
   const input = $("#speakerDialogName");
   const select = $("#speakerDialogSelect");
   const existingField = $("#speakerExistingField");
+  const newField = $("#speakerNewField");
+  const newToggle = $("#speakerNewToggle");
   if (!dialog || !form || !input || !select) return Promise.resolve(null);
 
   $("#speakerDialogTitle").textContent = options.title || "选择讲书人";
   $("#speakerDialogHint").textContent = options.hint || "请选择或新增一个具体讲书人。";
   existingField.hidden = Boolean(options.createOnly);
+  newField.hidden = !options.createOnly;
+  newToggle.hidden = Boolean(options.createOnly);
   fillSpeakerDialogOptions();
-  select.value = "";
+  select.value = !options.createOnly && speakers.length ? speakers[0].id : "";
   input.value = "";
+  if (options.createOnly) {
+    input.setAttribute("required", "");
+  } else {
+    input.removeAttribute("required");
+  }
 
   return new Promise(resolve => {
     let settled = false;
@@ -273,6 +306,7 @@ function openSpeakerDialog(options = {}) {
       if (settled) return;
       settled = true;
       form.onsubmit = null;
+      newToggle.onclick = null;
       dialog.removeEventListener("close", handleClose);
       resolve(value);
     };
@@ -300,9 +334,17 @@ function openSpeakerDialog(options = {}) {
       }
     };
 
+    newToggle.onclick = () => {
+      newField.hidden = false;
+      newToggle.hidden = true;
+      input.focus();
+    };
+
     dialog.addEventListener("close", handleClose);
     dialog.showModal();
-    input.focus();
+    const shouldFocusSelect = !options.createOnly && speakers.length > 0;
+    if (shouldFocusSelect) select.focus();
+    else input.focus();
   });
 }
 
@@ -689,9 +731,9 @@ function renderResultCard(result, index) {
     add.type = "button";
     add.className = "primary missing-add";
     add.textContent = "新增这本书";
-    add.addEventListener("click", async () => {
-      const speaker = await chooseTargetSpeaker("新增书籍");
-      if (!speaker) return;
+    add.addEventListener("click", () => {
+      if (!confirmLeaveDirty()) return;
+      const speaker = isAllSpeaker() ? null : currentSpeaker;
       openBookEditor(null, result.inputTitle, speaker);
     });
     actions.append(add);
@@ -729,10 +771,10 @@ function openDetail(result) {
         <button class="primary" id="detailAddMissing">新增这本书</button>
       </div>
     `;
-    $("#detailAddMissing").addEventListener("click", async () => {
+    $("#detailAddMissing").addEventListener("click", () => {
+      if (!confirmLeaveDirty()) return;
       $("#detailDialog").close();
-      const speaker = await chooseTargetSpeaker("新增书籍");
-      if (!speaker) return;
+      const speaker = isAllSpeaker() ? null : currentSpeaker;
       openBookEditor(null, result.inputTitle, speaker);
     });
     $("#detailDialog").showModal();
@@ -801,7 +843,11 @@ function renderManageList() {
           <small>${escapeHtml(speakerMeta)}${versionLabels[covers.version]} · ${covers.threeD ? "有立体封" : "无立体封"}${noteBadge ? ` · ${escapeHtml(noteBadge)}` : ""}</small>
         </span>
       `;
-      row.addEventListener("click", () => openBookEditor(book));
+      row.addEventListener("click", () => {
+        if (book.id === selectedBookId) return;
+        if (!confirmLeaveDirty()) return;
+        openBookEditor(book);
+      });
       list.append(row);
     });
 }
@@ -827,6 +873,7 @@ function openBookEditor(book, presetTitle = "", speakerOverride = null) {
   fillUploadSlots(book || { covers: emptyCovers() });
   updateActualVersionPreview();
   renderManageList();
+  clearDirty();
 }
 
 function resetEditor() {
@@ -845,6 +892,7 @@ function resetEditor() {
   fillUploadSlots({ covers: emptyCovers() });
   updateActualVersionPreview();
   renderManageList();
+  clearDirty();
 }
 
 function fillUploadSlots(book) {
@@ -859,6 +907,7 @@ function fillUploadSlots(book) {
     const urlInput = slot.querySelector(".cover-path");
     const fileInput = slot.querySelector('input[type="file"]');
     const img = slot.querySelector("img");
+    clearSlotImageError(slot);
     urlInput.value = values[key] || "";
     fileInput.value = "";
     if (values[key]) {
@@ -916,6 +965,18 @@ function setSlotState(key, text, options = {}) {
     button.hidden = !options.canSet;
     button.disabled = !options.canSet;
   }
+}
+
+function setSlotImageError(slot) {
+  if (!slot || !slot.classList.contains("has-image")) return;
+  const status = slot.querySelector(".slot-status");
+  slot.classList.add("is-error");
+  if (status) status.textContent = "图片无法加载";
+}
+
+function clearSlotImageError(slot) {
+  if (!slot) return;
+  slot.classList.remove("is-error");
 }
 
 function updateUploadSlotStates(book, version) {
@@ -1088,6 +1149,16 @@ async function createBatchDrafts(event) {
   }
 }
 
+function openBatchDialog() {
+  const hint = $("#batchSpeakerHint");
+  if (hint) {
+    hint.textContent = isAllSpeaker()
+      ? "提交时需要选择本次草稿归属的讲书人。"
+      : `本次草稿将归属到：${currentSpeaker.name}`;
+  }
+  $("#batchDialog").showModal();
+}
+
 function bindEvents() {
   $$(".tab").forEach(tab => {
     tab.addEventListener("click", () => {
@@ -1140,6 +1211,10 @@ function bindEvents() {
   });
 
   $("#speakerSelect").addEventListener("change", event => {
+    if (!confirmLeaveDirty()) {
+      event.target.value = currentSpeaker.id;
+      return;
+    }
     if (event.target.value === ALL_SPEAKER.id) {
       setCurrentSpeaker(ALL_SPEAKER);
       return;
@@ -1152,21 +1227,31 @@ function bindEvents() {
     button.addEventListener("click", () => $("#speakerDialog").close());
   });
   $("#manageSearch").addEventListener("input", renderManageList);
-  $("#newBook").addEventListener("click", () => {
-    const speaker = isAllSpeaker() ? null : currentSpeaker;
-    openBookEditor(null, "", speaker);
+  $("#newBook").addEventListener("click", startNewMaterial);
+  $("#resetEditor").addEventListener("click", () => {
+    if (!confirmLeaveDirty()) return;
+    resetEditor();
   });
-  $("#resetEditor").addEventListener("click", resetEditor);
   $("#bookForm").addEventListener("submit", saveBook);
   $("#deleteBook").addEventListener("click", deleteCurrentBook);
-  $("#bookStatus").addEventListener("change", updateActualVersionPreview);
+  $("#bookStatus").addEventListener("change", () => {
+    markDirty();
+    updateActualVersionPreview();
+  });
   $("#bookSpeaker").addEventListener("change", event => {
     const speaker = speakers.find(item => item.id === event.target.value);
-    if (speaker) setEditingSpeaker(speaker);
+    setEditingSpeaker(speaker || null);
+    markDirty();
   });
-  $("#bookNote").addEventListener("input", updateActualVersionPreview);
-  $("#bookTitle").addEventListener("input", updateActualVersionPreview);
-  $("#batchDrafts").addEventListener("click", () => $("#batchDialog").showModal());
+  $("#bookNote").addEventListener("input", () => {
+    markDirty();
+    updateActualVersionPreview();
+  });
+  $("#bookTitle").addEventListener("input", () => {
+    markDirty();
+    updateActualVersionPreview();
+  });
+  $("#batchDrafts").addEventListener("click", openBatchDialog);
   $$("[data-close-batch]").forEach(button => {
     button.addEventListener("click", () => $("#batchDialog").close());
   });
@@ -1191,11 +1276,15 @@ function bindEvents() {
         return;
       }
       uploadState[key] = { dataUrl: dataUrlValue };
+      clearSlotImageError(slot);
       urlInput.value = "";
       img.src = dataUrlValue;
       slot.classList.add("has-image");
+      markDirty();
       updateActualVersionPreview();
     };
+    img.addEventListener("load", () => clearSlotImageError(slot));
+    img.addEventListener("error", () => setSlotImageError(slot));
     zone.setAttribute("role", "button");
     zone.setAttribute("tabindex", "0");
     zone.setAttribute("aria-label", `${slot.querySelector("h3")?.textContent || "封面"}：选择或拖拽图片`);
@@ -1209,6 +1298,7 @@ function bindEvents() {
     fileInput.addEventListener("change", () => setFile(fileInput.files[0]));
     urlInput.addEventListener("input", () => {
       delete uploadState[key];
+      clearSlotImageError(slot);
       if (urlInput.value.trim()) {
         img.src = dataUrl(urlInput.value.trim());
         slot.classList.add("has-image");
@@ -1216,14 +1306,17 @@ function bindEvents() {
         img.removeAttribute("src");
         slot.classList.remove("has-image");
       }
+      markDirty();
       updateActualVersionPreview();
     });
     slot.querySelector(".clear-slot").addEventListener("click", () => {
       delete uploadState[key];
+      clearSlotImageError(slot);
       urlInput.value = "";
       fileInput.value = "";
       img.removeAttribute("src");
       slot.classList.remove("has-image");
+      markDirty();
       updateActualVersionPreview();
     });
     if (setDisplayButton) {
@@ -1231,6 +1324,7 @@ function bindEvents() {
         const [version] = slotMap()[key] || [];
         if (!version) return;
         $("#preferredVersion").value = version;
+        markDirty();
         updateActualVersionPreview();
       });
     }

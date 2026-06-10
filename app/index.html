@@ -103,7 +103,7 @@
               </label>
               <label class="field">
                 <span>讲书人</span>
-                <select id="bookSpeaker" name="bookSpeaker" autocomplete="off"></select>
+                <select id="bookSpeaker" name="bookSpeaker" autocomplete="off" required></select>
               </label>
               <label class="field">
                 <span>书籍状态</span>
@@ -180,6 +180,7 @@
         <h2>批量新增草稿</h2>
         <button class="icon" value="cancel" type="button" data-close-batch aria-label="关闭">×</button>
       </div>
+      <p id="batchSpeakerHint" class="dialog-hint"></p>
       <textarea id="batchTitles" name="batchTitles" autocomplete="off" placeholder="一行一本，或用顿号/逗号分隔"></textarea>
       <div class="dialog-actions">
         <span></span>
@@ -200,8 +201,9 @@
         <span>选择已有讲书人</span>
         <select id="speakerDialogSelect" autocomplete="off"></select>
       </label>
-      <label class="field">
-        <span>或新增讲书人</span>
+      <button id="speakerNewToggle" class="ghost subtle-action" type="button">没有这个讲书人？新增</button>
+      <label class="field" id="speakerNewField">
+        <span>讲书人名称</span>
         <input id="speakerDialogName" name="speakerDialogName" type="text" autocomplete="off" placeholder="例如：讲书人A">
       </label>
       <div class="dialog-actions">

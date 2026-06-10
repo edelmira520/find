@@ -195,6 +195,14 @@ select:focus-visible,
   color: var(--muted);
 }
 
+.subtle-action {
+  margin: 0 0 4px;
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+}
+
 .tabs,
 .filters,
 .actions,
@@ -758,6 +766,16 @@ select {
   background: #fffaf7;
 }
 
+.upload-slot.is-error {
+  border-color: rgba(180, 35, 24, 0.55);
+  background: #fff7f5;
+}
+
+.upload-slot.is-error .slot-status {
+  color: var(--danger);
+  background: #fff1ee;
+}
+
 .slot-head {
   display: flex;
   justify-content: space-between;
@@ -879,6 +897,10 @@ dialog {
   padding: 18px;
   background: var(--paper);
   box-shadow: 0 24px 70px rgba(37, 30, 22, 0.28);
+}
+
+dialog [hidden] {
+  display: none !important;
 }
 
 dialog::backdrop {

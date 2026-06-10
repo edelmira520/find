@@ -36,6 +36,8 @@ http://localhost:4173
 python3 scripts/import_excel.py "/Users/heyeping/Downloads/樊登讲书-书籍封面.xlsx" --out data
 ```
 
+`import_excel.py` 是重建导入：会生成并覆盖 `data/books.json`，适合第一次初始化或确认要重建整套资料时使用。日常拿到新 Excel，尤其是追加新讲书人或合并新表时，优先使用下面的 `merge_excel.py`。
+
 生成内容：
 
 ```text
@@ -54,6 +56,8 @@ data/
 ```bash
 python3 scripts/import_excel.py "新讲书人.xlsx" --out data --speaker-id speaker_a --speaker-name "讲书人A"
 ```
+
+导入其他讲书人时必须显式传 `--speaker-id` 和 `--speaker-name`。“全部”只是界面筛选状态，不能作为导入归属。
 
 ## Excel 映射
 
@@ -111,6 +115,8 @@ python3 scripts/merge_excel.py new.xlsx --data data --speaker-id speaker_a --spe
 `--apply` 会先备份 `data/books.json`，然后只新增资料库没有的书，或补齐旧书缺失的封面位。`conflict`、`offline_conflict`、`duplicate_conflict` 默认不执行；第一版不覆盖旧封面，也不自动恢复已下架书籍。
 
 合并判断只在同一个讲书人下面进行。同一本书如果属于不同讲书人，会作为不同资料记录处理，不会跨讲书人覆盖封面、备注、上下架状态或展示版本。
+
+合并其他讲书人时也必须显式传 `--speaker-id` 和 `--speaker-name`；不要使用“全部”作为合并归属。
 
 ## 展示规则
 
