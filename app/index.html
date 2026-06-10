@@ -14,10 +14,15 @@
         <p>本地 Node 版，日常核对、查找和维护书封资料。</p>
       </div>
       <div class="topbar-actions">
-        <label class="speaker-picker">
+        <div class="speaker-picker">
           <span>当前讲书人</span>
-          <select id="speakerSelect" name="speakerSelect"></select>
-        </label>
+          <div class="speaker-menu-wrap">
+            <button id="speakerMenuButton" class="speaker-menu-button" type="button" aria-haspopup="listbox" aria-expanded="false">
+              <span id="speakerMenuLabel">全部</span>
+            </button>
+            <div id="speakerMenu" class="speaker-menu" role="listbox" hidden></div>
+          </div>
+        </div>
         <button id="addSpeaker" class="ghost speaker-add" type="button" aria-label="新增讲书人" title="新增讲书人">＋</button>
         <nav class="tabs" aria-label="页面">
           <button class="tab active" data-view="search">查找</button>
@@ -44,7 +49,7 @@
 
           <div id="previewPanel" class="preview-panel">
             <div class="panel-head compact">
-              <h2>识别书名</h2>
+              <h2>待匹配书名</h2>
               <span id="previewCount" class="muted" aria-live="polite">识别到 0 本</span>
             </div>
             <p class="preview-hint">左侧会自动识别书名；漏掉的书可在下方手动补充，都会一起参与匹配。</p>

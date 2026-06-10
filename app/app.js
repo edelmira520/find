@@ -12,6 +12,7 @@ let selectedBookId = "";
 let returnToMissingTitle = "";
 let formDirty = false;
 const uploadState = {};
+const customSelects = new Map();
 
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
@@ -129,20 +130,166 @@ function currentSpeakerBooks() {
 }
 
 function renderSpeakerSelect() {
-  const select = $("#speakerSelect");
-  if (!select) return;
-  select.innerHTML = "";
-  const allOption = document.createElement("option");
-  allOption.value = ALL_SPEAKER.id;
-  allOption.textContent = ALL_SPEAKER.name;
-  select.append(allOption);
-  speakers.forEach(speaker => {
-    const option = document.createElement("option");
-    option.value = speaker.id;
+  const label = $("#speakerMenuLabel");
+  const menu = $("#speakerMenu");
+  const button = $("#speakerMenuButton");
+  if (!label || !menu || !button) return;
+  label.textContent = currentSpeaker.name;
+  button.setAttribute("aria-expanded", menu.hidden ? "false" : "true");
+  menu.innerHTML = "";
+  [ALL_SPEAKER, ...speakers].forEach(speaker => {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "speaker-menu-option";
+    option.dataset.speakerId = speaker.id;
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", speaker.id === currentSpeaker.id ? "true" : "false");
     option.textContent = speaker.name;
-    select.append(option);
+    option.addEventListener("click", () => selectTopSpeaker(speaker));
+    menu.append(option);
   });
-  select.value = currentSpeaker.id;
+}
+
+function closeSpeakerMenu() {
+  const menu = $("#speakerMenu");
+  const button = $("#speakerMenuButton");
+  if (!menu || !button) return;
+  menu.hidden = true;
+  button.setAttribute("aria-expanded", "false");
+}
+
+function toggleSpeakerMenu() {
+  const menu = $("#speakerMenu");
+  const button = $("#speakerMenuButton");
+  if (!menu || !button) return;
+  closeCustomSelects();
+  menu.hidden = !menu.hidden;
+  button.setAttribute("aria-expanded", menu.hidden ? "false" : "true");
+  if (!menu.hidden) {
+    const selected = menu.querySelector('[aria-selected="true"]') || menu.querySelector(".speaker-menu-option");
+    selected?.focus();
+  }
+}
+
+function selectTopSpeaker(speaker) {
+  if (speaker.id === currentSpeaker.id) {
+    closeSpeakerMenu();
+    return;
+  }
+  if (!confirmLeaveDirty()) {
+    closeSpeakerMenu();
+    return;
+  }
+  setCurrentSpeaker(speaker.id === ALL_SPEAKER.id ? ALL_SPEAKER : speaker);
+  closeSpeakerMenu();
+}
+
+function closeCustomSelects(exceptSelect = null) {
+  customSelects.forEach((control, select) => {
+    if (select === exceptSelect) return;
+    control.menu.hidden = true;
+    control.button.setAttribute("aria-expanded", "false");
+  });
+}
+
+function selectedOptionLabel(select) {
+  return select.selectedOptions[0]?.textContent || select.options[0]?.textContent || "请选择";
+}
+
+function focusCustomSelect(select) {
+  const control = customSelects.get(select);
+  if (control) control.button.focus();
+  else select.focus();
+}
+
+function updateCustomSelect(select) {
+  const control = customSelects.get(select);
+  if (!control) return;
+  control.button.disabled = select.disabled;
+  control.button.querySelector(".custom-select-label").textContent = selectedOptionLabel(select);
+  control.menu.innerHTML = "";
+  Array.from(select.options).forEach(option => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "custom-select-option";
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", option.selected ? "true" : "false");
+    item.disabled = option.disabled;
+    item.textContent = option.textContent;
+    item.addEventListener("click", () => {
+      if (option.disabled) return;
+      select.value = option.value;
+      updateCustomSelect(select);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      control.menu.hidden = true;
+      control.button.setAttribute("aria-expanded", "false");
+      control.button.focus();
+    });
+    control.menu.append(item);
+  });
+}
+
+function initCustomSelect(select) {
+  if (!select || customSelects.has(select)) {
+    if (select) updateCustomSelect(select);
+    return;
+  }
+  const wrap = document.createElement("div");
+  wrap.className = "custom-select";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "custom-select-button";
+  button.setAttribute("aria-haspopup", "listbox");
+  button.setAttribute("aria-expanded", "false");
+  button.innerHTML = `<span class="custom-select-label"></span>`;
+  const menu = document.createElement("div");
+  menu.className = "custom-select-menu";
+  menu.setAttribute("role", "listbox");
+  menu.hidden = true;
+  select.classList.add("native-select-hidden");
+  select.after(wrap);
+  wrap.append(select, button, menu);
+  customSelects.set(select, { wrap, button, menu });
+
+  button.addEventListener("click", () => {
+    const nextOpen = menu.hidden;
+    closeSpeakerMenu();
+    closeCustomSelects(select);
+    menu.hidden = !nextOpen;
+    button.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+    if (nextOpen) {
+      const selected = menu.querySelector('[aria-selected="true"]') || menu.querySelector(".custom-select-option");
+      selected?.focus();
+    }
+  });
+  button.addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      button.click();
+    }
+    if (event.key === "Escape") {
+      menu.hidden = true;
+      button.setAttribute("aria-expanded", "false");
+    }
+  });
+  menu.addEventListener("keydown", event => {
+    const options = Array.from(menu.querySelectorAll(".custom-select-option:not(:disabled)"));
+    const index = options.indexOf(document.activeElement);
+    if (event.key === "Escape") {
+      menu.hidden = true;
+      button.setAttribute("aria-expanded", "false");
+      button.focus();
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      options[Math.min(index + 1, options.length - 1)]?.focus();
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      options[Math.max(index - 1, 0)]?.focus();
+    }
+  });
+  updateCustomSelect(select);
 }
 
 function renderBookSpeakerSelect(selectedSpeaker = editingSpeaker) {
@@ -168,6 +315,8 @@ function renderBookSpeakerSelect(selectedSpeaker = editingSpeaker) {
   });
   select.value = selected?.id || "";
   select.disabled = options.length === 0;
+  initCustomSelect(select);
+  updateCustomSelect(select);
 }
 
 function setEditingSpeaker(speaker) {
@@ -189,10 +338,9 @@ function setCurrentSpeaker(speaker) {
   showStatus(`已切换到讲书人：${currentSpeaker.name}`, "success");
 }
 
-async function startNewMaterial() {
+function startNewMaterial() {
   if (!confirmLeaveDirty()) return;
-  const speaker = await chooseTargetSpeaker("新增素材");
-  if (!speaker) return;
+  const speaker = isAllSpeaker() ? null : currentSpeaker;
   openBookEditor(null, "", speaker);
 }
 
@@ -266,14 +414,21 @@ function fillSpeakerDialogOptions() {
   select.innerHTML = "";
   if (!speakers.length) {
     select.innerHTML = `<option value="">暂无讲书人，请新增</option>`;
+    updateCustomSelect(select);
     return;
   }
+  const emptyOption = document.createElement("option");
+  emptyOption.value = "";
+  emptyOption.textContent = "不选择已有，直接新增";
+  select.append(emptyOption);
   speakers.forEach(speaker => {
     const option = document.createElement("option");
     option.value = speaker.id;
     option.textContent = speaker.name;
     select.append(option);
   });
+  initCustomSelect(select);
+  updateCustomSelect(select);
 }
 
 function openSpeakerDialog(options = {}) {
@@ -293,6 +448,7 @@ function openSpeakerDialog(options = {}) {
   newToggle.hidden = Boolean(options.createOnly);
   fillSpeakerDialogOptions();
   select.value = !options.createOnly && speakers.length ? speakers[0].id : "";
+  updateCustomSelect(select);
   input.value = "";
   if (options.createOnly) {
     input.setAttribute("required", "");
@@ -825,31 +981,40 @@ function renderManageList() {
   const query = normalize($("#manageSearch").value);
   const list = $("#bookList");
   list.innerHTML = "";
-  currentSpeakerBooks()
-    .filter(book => !query || normalize(book.title).includes(query))
-    .forEach(book => {
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = `book-row ${book.id === selectedBookId ? "active" : ""}`;
-      const covers = displayCovers(book);
-      const offline = isOffline(book);
-      const noteBadge = noteBadgeText(book);
-      const speakerMeta = isAllSpeaker() ? `${bookSpeakerName(book)} · ` : "";
-      const thumb = covers.flat ? `<img ${imageAttrs(covers.flat, "")}>` : `<div class="thumb-placeholder">无图</div>`;
-      row.innerHTML = `
+  const visibleBooks = currentSpeakerBooks()
+    .filter(book => !query || normalize(book.title).includes(query));
+  if (!visibleBooks.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.innerHTML = query
+      ? `<strong>没有找到相关素材</strong><span>换个书名关键词试试。</span>`
+      : `<strong>当前范围还没有素材</strong><span>可以先批量新增草稿，或新增单本书。</span>`;
+    list.append(empty);
+    return;
+  }
+  visibleBooks.forEach(book => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = `book-row ${book.id === selectedBookId ? "active" : ""}`;
+    const covers = displayCovers(book);
+    const offline = isOffline(book);
+    const noteBadge = noteBadgeText(book);
+    const speakerMeta = isAllSpeaker() ? `${bookSpeakerName(book)} · ` : "";
+    const thumb = covers.flat ? `<img ${imageAttrs(covers.flat, "")}>` : `<div class="thumb-placeholder">无图</div>`;
+    row.innerHTML = `
         ${thumb}
         <span>
           <strong>${escapeHtml(book.title)}${offline ? `<em class="status-pill offline">已下架</em>` : `<em class="status-pill active">正常</em>`}</strong>
           <small>${escapeHtml(speakerMeta)}${versionLabels[covers.version]} · ${covers.threeD ? "有立体封" : "无立体封"}${noteBadge ? ` · ${escapeHtml(noteBadge)}` : ""}</small>
         </span>
       `;
-      row.addEventListener("click", () => {
-        if (book.id === selectedBookId) return;
-        if (!confirmLeaveDirty()) return;
-        openBookEditor(book);
-      });
-      list.append(row);
+    row.addEventListener("click", () => {
+      if (book.id === selectedBookId) return;
+      if (!confirmLeaveDirty()) return;
+      openBookEditor(book);
     });
+    list.append(row);
+  });
 }
 
 function openBookEditor(book, presetTitle = "", speakerOverride = null) {
@@ -867,6 +1032,7 @@ function openBookEditor(book, presetTitle = "", speakerOverride = null) {
   $("#bookTitle").value = book ? book.title : presetTitle;
   setEditingSpeaker(speaker);
   $("#bookStatus").value = bookStatus(book);
+  updateCustomSelect($("#bookStatus"));
   $("#bookNote").value = bookNote(book);
   $("#preferredVersion").value = normalizePreferredVersion(book?.preferredVersion || "auto");
   $("#deleteBook").style.visibility = book ? "visible" : "hidden";
@@ -886,6 +1052,7 @@ function resetEditor() {
   setEditingSpeaker(null);
   $("#bookId").value = "";
   $("#bookStatus").value = "active";
+  updateCustomSelect($("#bookStatus"));
   $("#bookNote").value = "";
   $("#preferredVersion").value = "auto";
   $("#deleteBook").style.visibility = "hidden";
@@ -1039,6 +1206,7 @@ async function saveBook(event) {
   const pendingReturnTitle = returnToMissingTitle;
   try {
     if (!book.speakerId || book.speakerId === ALL_SPEAKER.id || book.speakerName === ALL_SPEAKER.name) {
+      focusCustomSelect($("#bookSpeaker"));
       throw new Error("请选择讲书人后再保存");
     }
     const response = await fetch(isEdit ? `/api/books/${encodeURIComponent(book.id)}` : "/api/books", {
@@ -1210,17 +1378,37 @@ function bindEvents() {
     });
   });
 
-  $("#speakerSelect").addEventListener("change", event => {
-    if (!confirmLeaveDirty()) {
-      event.target.value = currentSpeaker.id;
-      return;
+  $("#speakerMenuButton").addEventListener("click", toggleSpeakerMenu);
+  $("#speakerMenuButton").addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      toggleSpeakerMenu();
     }
-    if (event.target.value === ALL_SPEAKER.id) {
-      setCurrentSpeaker(ALL_SPEAKER);
-      return;
+    if (event.key === "Escape") closeSpeakerMenu();
+  });
+  $("#speakerMenu").addEventListener("keydown", event => {
+    const options = $$("#speakerMenu .speaker-menu-option");
+    const index = options.indexOf(document.activeElement);
+    if (event.key === "Escape") {
+      closeSpeakerMenu();
+      $("#speakerMenuButton").focus();
     }
-    const speaker = speakers.find(item => item.id === event.target.value);
-    if (speaker) setCurrentSpeaker(speaker);
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      options[Math.min(index + 1, options.length - 1)]?.focus();
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      options[Math.max(index - 1, 0)]?.focus();
+    }
+  });
+  document.addEventListener("click", event => {
+    if (!event.target.closest(".speaker-picker")) {
+      closeSpeakerMenu();
+    }
+    if (!event.target.closest(".custom-select")) {
+      closeCustomSelects();
+    }
   });
   $("#addSpeaker").addEventListener("click", createSpeaker);
   $$("[data-close-speaker]").forEach(button => {
@@ -1232,7 +1420,11 @@ function bindEvents() {
     if (!confirmLeaveDirty()) return;
     resetEditor();
   });
+  $("#bookForm").noValidate = true;
   $("#bookForm").addEventListener("submit", saveBook);
+  initCustomSelect($("#bookSpeaker"));
+  initCustomSelect($("#bookStatus"));
+  initCustomSelect($("#speakerDialogSelect"));
   $("#deleteBook").addEventListener("click", deleteCurrentBook);
   $("#bookStatus").addEventListener("change", () => {
     markDirty();
