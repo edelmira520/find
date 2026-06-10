@@ -9,6 +9,8 @@ const DATA_DIR = path.join(ROOT, "data");
 const COVERS_DIR = path.join(DATA_DIR, "covers");
 const BACKUPS_DIR = path.join(DATA_DIR, "backups");
 const BOOKS_PATH = path.join(DATA_DIR, "books.json");
+const SPEAKERS_PATH = path.join(DATA_DIR, "speakers.json");
+const DEFAULT_SPEAKER = { id: "fandeng", name: "樊登" };
 const PORT = Number(process.env.PORT || 4173);
 
 const MAX_JSON_BODY_BYTES = 50 * 1024 * 1024;
@@ -38,6 +40,9 @@ function ensureData() {
   fs.mkdirSync(BACKUPS_DIR, { recursive: true });
   if (!fs.existsSync(BOOKS_PATH)) {
     fs.writeFileSync(BOOKS_PATH, "[]\n", "utf8");
+  }
+  if (!fs.existsSync(SPEAKERS_PATH)) {
+    fs.writeFileSync(SPEAKERS_PATH, `${JSON.stringify([DEFAULT_SPEAKER], null, 2)}\n`, "utf8");
   }
 }
 
@@ -80,12 +85,68 @@ function readBooks() {
   try {
     const parsed = JSON.parse(fs.readFileSync(BOOKS_PATH, "utf8") || "[]");
     if (!Array.isArray(parsed)) throw new Error("books.json must contain an array");
-    return parsed;
+    return parsed.map(book => normalizeSpeakerFields(book));
   } catch (error) {
     const wrapped = new Error(`资料库文件 data/books.json 格式不正确：${error.message}`);
     wrapped.statusCode = 500;
     throw wrapped;
   }
+}
+
+function normalizeSpeakerFields(book) {
+  return {
+    ...book,
+    speakerId: String(book.speakerId || DEFAULT_SPEAKER.id).trim() || DEFAULT_SPEAKER.id,
+    speakerName: String(book.speakerName || DEFAULT_SPEAKER.name).trim() || DEFAULT_SPEAKER.name,
+  };
+}
+
+function readSpeakers() {
+  ensureData();
+  try {
+    const parsed = JSON.parse(fs.readFileSync(SPEAKERS_PATH, "utf8") || "[]");
+    if (!Array.isArray(parsed)) throw new Error("speakers.json must contain an array");
+    const speakers = parsed
+      .map(speaker => ({
+        id: String(speaker.id || "").trim(),
+        name: String(speaker.name || "").trim(),
+      }))
+      .filter(speaker => speaker.id && speaker.name);
+    if (!speakers.some(speaker => speaker.id === DEFAULT_SPEAKER.id)) speakers.unshift(DEFAULT_SPEAKER);
+    return speakers;
+  } catch (error) {
+    const wrapped = new Error(`讲书人文件 data/speakers.json 格式不正确：${error.message}`);
+    wrapped.statusCode = 500;
+    throw wrapped;
+  }
+}
+
+function writeSpeakers(speakers) {
+  ensureData();
+  const tempPath = `${SPEAKERS_PATH}.${process.pid}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(speakers, null, 2), "utf8");
+  fs.renameSync(tempPath, SPEAKERS_PATH);
+}
+
+function slugSpeakerId(name, existingSpeakers) {
+  const cleaned = sanitizePathPart(name).toLowerCase().replace(/^_+|_+$/g, "");
+  const base = cleaned || `speaker_${crypto.randomBytes(3).toString("hex")}`;
+  const used = new Set(existingSpeakers.map(speaker => speaker.id));
+  let id = base;
+  let index = 2;
+  while (used.has(id)) {
+    id = `${base}_${index}`;
+    index += 1;
+  }
+  return id;
+}
+
+function isReservedSpeaker(speaker) {
+  return speaker.id === "all" || speaker.name === "全部";
+}
+
+function hasConcreteSpeaker(book) {
+  return Boolean(book.speakerId && book.speakerName && !isReservedSpeaker({ id: book.speakerId, name: book.speakerName }));
 }
 
 function writeBooks(books) {
@@ -142,6 +203,8 @@ function normalizeBook(input, existing, books) {
     ? String(input.note || "").trim()
     : String(book.note || "").trim();
   book.status = ["active", "offline"].includes(input.status) ? input.status : (book.status || "active");
+  book.speakerId = String(input.speakerId || book.speakerId || DEFAULT_SPEAKER.id).trim() || DEFAULT_SPEAKER.id;
+  book.speakerName = String(input.speakerName || book.speakerName || DEFAULT_SPEAKER.name).trim() || DEFAULT_SPEAKER.name;
   book.preferredVersion = ["auto", "custom", "original"].includes(input.preferredVersion)
     ? input.preferredVersion
     : "auto";
@@ -256,6 +319,35 @@ function serveStatic(req, res) {
 
 async function handleApi(req, res) {
   const url = new URL(req.url, `http://localhost:${PORT}`);
+  if (url.pathname === "/api/speakers" && req.method === "GET") {
+    send(res, 200, JSON.stringify(readSpeakers()));
+    return;
+  }
+  if (url.pathname === "/api/speakers" && req.method === "POST") {
+    const payload = await readJson(req, res);
+    if (!payload) return;
+    const speakers = readSpeakers();
+    const name = String(payload.name || "").trim();
+    const requestedId = String(payload.id || "").trim();
+    if (!name) {
+      send(res, 400, JSON.stringify({ error: "讲书人名称不能为空" }));
+      return;
+    }
+    if (requestedId === "all" || name === "全部") {
+      send(res, 400, JSON.stringify({ error: "“全部”只是筛选项，不能保存为讲书人" }));
+      return;
+    }
+    const existing = speakers.find(speaker => speaker.name === name || (requestedId && speaker.id === requestedId));
+    if (existing) {
+      send(res, 200, JSON.stringify(existing));
+      return;
+    }
+    const speaker = { id: requestedId || slugSpeakerId(name, speakers), name };
+    speakers.push(speaker);
+    writeSpeakers(speakers);
+    send(res, 200, JSON.stringify(speaker));
+    return;
+  }
   if (url.pathname === "/api/books" && req.method === "GET") {
     send(res, 200, JSON.stringify(readBooks()));
     return;
@@ -264,10 +356,16 @@ async function handleApi(req, res) {
     const payload = await readJson(req, res);
     if (!payload) return;
     const titles = Array.isArray(payload.titles) ? payload.titles : [];
+    const speakerId = String(payload.speakerId || DEFAULT_SPEAKER.id).trim() || DEFAULT_SPEAKER.id;
+    const speakerName = String(payload.speakerName || DEFAULT_SPEAKER.name).trim() || DEFAULT_SPEAKER.name;
+    if (isReservedSpeaker({ id: speakerId, name: speakerName })) {
+      send(res, 400, JSON.stringify({ error: "批量草稿必须选择具体讲书人" }));
+      return;
+    }
     const books = readBooks();
     const created = [];
     for (const title of titles) {
-      const book = normalizeBook({ title, status: "active", preferredVersion: "auto", covers: defaultCovers() }, null, books);
+      const book = normalizeBook({ title, speakerId, speakerName, status: "active", preferredVersion: "auto", covers: defaultCovers() }, null, books);
       if (!book.title) continue;
       books.push(book);
       created.push(book);
@@ -287,6 +385,10 @@ async function handleApi(req, res) {
     const book = normalizeBook(payload.book || payload, null, books);
     if (!book.title) {
       send(res, 400, JSON.stringify({ error: "书名不能为空" }));
+      return;
+    }
+    if (!hasConcreteSpeaker(book)) {
+      send(res, 400, JSON.stringify({ error: "书籍必须归属到具体讲书人" }));
       return;
     }
     processUploads(book, payload.uploads);
@@ -310,6 +412,10 @@ async function handleApi(req, res) {
     const book = normalizeBook({ ...payload.book, id }, books[index], books);
     if (!book.title) {
       send(res, 400, JSON.stringify({ error: "书名不能为空" }));
+      return;
+    }
+    if (!hasConcreteSpeaker(book)) {
+      send(res, 400, JSON.stringify({ error: "书籍必须归属到具体讲书人" }));
       return;
     }
     processUploads(book, payload.uploads);

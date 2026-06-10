@@ -18,12 +18,22 @@ COVER_COLUMNS = {
     10: ("original", "threeD", "original_3d"),
 }
 OFFLINE_KEYWORDS = ["下线", "下架", "已下", "停用", "不可用"]
+DEFAULT_SPEAKER_ID = "fandeng"
+DEFAULT_SPEAKER_NAME = "樊登"
 
 
 def clean_text(value):
     if value is None:
         return ""
     return str(value).strip()
+
+
+def normalize_speaker_args(speaker_id, speaker_name):
+    speaker_id = clean_text(speaker_id) or DEFAULT_SPEAKER_ID
+    speaker_name = clean_text(speaker_name) or DEFAULT_SPEAKER_NAME
+    if speaker_id == "all" or speaker_name == "全部":
+        raise ValueError("“全部”只是前端筛选项，导入时必须指定真实讲书人")
+    return speaker_id, speaker_name
 
 
 def clean_title(value):
@@ -43,6 +53,22 @@ def default_preferred_version():
 
 def slug_id(index):
     return f"book_{index:03d}"
+
+
+def ensure_speaker(data_dir, speaker_id, speaker_name):
+    data_dir.mkdir(parents=True, exist_ok=True)
+    speakers_path = data_dir / "speakers.json"
+    speakers = []
+    if speakers_path.exists():
+        try:
+            speakers = json.loads(speakers_path.read_text(encoding="utf-8"))
+            if not isinstance(speakers, list):
+                speakers = []
+        except json.JSONDecodeError:
+            speakers = []
+    if not any(speaker.get("id") == speaker_id for speaker in speakers if isinstance(speaker, dict)):
+        speakers.append({"id": speaker_id, "name": speaker_name})
+    speakers_path.write_text(json.dumps(speakers, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def image_extension(image):
@@ -303,11 +329,14 @@ def build_preview_html(books, report):
 """
 
 
-def convert(excel_path, output_dir):
+def convert(excel_path, output_dir, speaker_id=DEFAULT_SPEAKER_ID, speaker_name=DEFAULT_SPEAKER_NAME):
     from openpyxl import load_workbook
 
     output_dir = Path(output_dir)
     data_dir = output_dir
+    speaker_id, speaker_name = normalize_speaker_args(speaker_id, speaker_name)
+    ensure_speaker(data_dir, speaker_id, speaker_name)
+
     covers_dir = data_dir / "covers"
     if covers_dir.exists():
         shutil.rmtree(covers_dir)
@@ -351,6 +380,8 @@ def convert(excel_path, output_dir):
         book = {
             "id": book_id,
             "title": title,
+            "speakerId": speaker_id,
+            "speakerName": speaker_name,
             "note": note,
             "status": resolve_status(note),
             "preferredVersion": default_preferred_version(),
@@ -446,8 +477,10 @@ def main():
     parser = argparse.ArgumentParser(description="Import book covers from Excel embedded images.")
     parser.add_argument("excel", help="Path to the source .xlsx file")
     parser.add_argument("--out", default="data", help="Output data directory")
+    parser.add_argument("--speaker-id", default=DEFAULT_SPEAKER_ID, help="Lecturer/speaker id for imported books")
+    parser.add_argument("--speaker-name", default=DEFAULT_SPEAKER_NAME, help="Lecturer/speaker name for imported books")
     args = parser.parse_args()
-    convert(Path(args.excel), Path(args.out))
+    convert(Path(args.excel), Path(args.out), speaker_id=args.speaker_id, speaker_name=args.speaker_name)
 
 
 if __name__ == "__main__":

@@ -13,10 +13,17 @@
         <h1>书封素材工作台</h1>
         <p>本地 Node 版，日常核对、查找和维护书封资料。</p>
       </div>
-      <nav class="tabs" aria-label="页面">
-        <button class="tab active" data-view="search">查找</button>
-        <button class="tab" data-view="manage">资料维护</button>
-      </nav>
+      <div class="topbar-actions">
+        <label class="speaker-picker">
+          <span>当前讲书人</span>
+          <select id="speakerSelect" name="speakerSelect"></select>
+        </label>
+        <button id="addSpeaker" class="ghost speaker-add" type="button" aria-label="新增讲书人" title="新增讲书人">＋</button>
+        <nav class="tabs" aria-label="页面">
+          <button class="tab active" data-view="search">查找</button>
+          <button class="tab" data-view="manage">资料维护</button>
+        </nav>
+      </div>
     </header>
 
     <div id="appStatus" class="app-status" role="status" aria-live="polite"></div>
@@ -73,7 +80,7 @@
               <h2>素材库</h2>
               <div class="mini-actions">
                 <button id="batchDrafts" class="ghost">批量草稿</button>
-                <button id="newBook" class="primary">新增</button>
+                <button id="newBook" class="primary">新增素材</button>
               </div>
             </div>
             <input id="manageSearch" name="manageSearch" type="search" autocomplete="off" placeholder="搜索书名">
@@ -93,6 +100,10 @@
               <label class="field">
                 <span>书名</span>
                 <input id="bookTitle" name="bookTitle" autocomplete="off" required>
+              </label>
+              <label class="field">
+                <span>讲书人</span>
+                <select id="bookSpeaker" name="bookSpeaker" autocomplete="off"></select>
               </label>
               <label class="field">
                 <span>书籍状态</span>
@@ -174,6 +185,29 @@
         <span></span>
         <button value="cancel" class="ghost" type="button" data-close-batch>取消</button>
         <button class="primary" type="submit">生成草稿</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="speakerDialog">
+    <form method="dialog" id="speakerForm">
+      <div class="dialog-head">
+        <h2 id="speakerDialogTitle">选择讲书人</h2>
+        <button class="icon" value="cancel" type="button" data-close-speaker aria-label="关闭">×</button>
+      </div>
+      <p id="speakerDialogHint" class="dialog-hint">新增书籍需要归属到一个具体讲书人。</p>
+      <label class="field" id="speakerExistingField">
+        <span>选择已有讲书人</span>
+        <select id="speakerDialogSelect" autocomplete="off"></select>
+      </label>
+      <label class="field">
+        <span>或新增讲书人</span>
+        <input id="speakerDialogName" name="speakerDialogName" type="text" autocomplete="off" placeholder="例如：讲书人A">
+      </label>
+      <div class="dialog-actions">
+        <span></span>
+        <button value="cancel" class="ghost" type="button" data-close-speaker>取消</button>
+        <button class="primary" type="submit">确定</button>
       </div>
     </form>
   </dialog>

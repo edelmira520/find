@@ -162,6 +162,39 @@ select:focus-visible,
   color: var(--muted);
 }
 
+.topbar-actions,
+.speaker-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.speaker-picker span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.speaker-picker select {
+  min-width: 136px;
+  width: auto;
+  background: #fffaf2;
+}
+
+.speaker-add {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.dialog-hint {
+  margin: 0 0 12px;
+  color: var(--muted);
+}
+
 .tabs,
 .filters,
 .actions,

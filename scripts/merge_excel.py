@@ -20,12 +20,38 @@ COVER_COLUMNS = {
 }
 ACTION_KEYS = ["add", "fill", "conflict", "offline_conflict", "duplicate_conflict", "note_conflict", "skip"]
 OFFLINE_KEYWORDS = ["下线", "下架", "已下", "停用", "不可用"]
+DEFAULT_SPEAKER_ID = "fandeng"
+DEFAULT_SPEAKER_NAME = "樊登"
 
 
 def clean_text(value):
     if value is None:
         return ""
     return str(value).strip()
+
+
+def normalize_speaker_args(speaker_id, speaker_name):
+    speaker_id = clean_text(speaker_id) or DEFAULT_SPEAKER_ID
+    speaker_name = clean_text(speaker_name) or DEFAULT_SPEAKER_NAME
+    if speaker_id == "all" or speaker_name == "全部":
+        raise ValueError("“全部”只是前端筛选项，合并时必须指定真实讲书人")
+    return speaker_id, speaker_name
+
+
+def ensure_speaker(data_dir, speaker_id, speaker_name):
+    data_dir.mkdir(parents=True, exist_ok=True)
+    speakers_path = data_dir / "speakers.json"
+    speakers = []
+    if speakers_path.exists():
+        try:
+            speakers = json.loads(speakers_path.read_text(encoding="utf-8"))
+            if not isinstance(speakers, list):
+                speakers = []
+        except json.JSONDecodeError:
+            speakers = []
+    if not any(speaker.get("id") == speaker_id for speaker in speakers if isinstance(speaker, dict)):
+        speakers.append({"id": speaker_id, "name": speaker_name})
+    speakers_path.write_text(json.dumps(speakers, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def clean_title(value):
@@ -144,7 +170,7 @@ def rel_path(path, base):
     return path.relative_to(base).as_posix()
 
 
-def read_excel_rows(excel_path, run_dir, data_dir):
+def read_excel_rows(excel_path, run_dir, data_dir, speaker_id, speaker_name):
     from openpyxl import load_workbook
 
     workbook = load_workbook(excel_path, read_only=False, data_only=True)
@@ -193,6 +219,8 @@ def read_excel_rows(excel_path, run_dir, data_dir):
         rows.append({
             "row": row_index,
             "title": title,
+            "speakerId": speaker_id,
+            "speakerName": speaker_name,
             "note": note,
             "status": resolve_status(note),
             "preferredVersion": default_preferred_version(),
@@ -211,9 +239,11 @@ def read_excel_rows(excel_path, run_dir, data_dir):
     }
 
 
-def index_books(books):
+def index_books(books, speaker_id):
     groups = defaultdict(list)
     for book in books:
+        if book.get("speakerId", DEFAULT_SPEAKER_ID) != speaker_id:
+            continue
         groups[normalize_title(book.get("title", ""))].append(book)
     return groups
 
@@ -271,8 +301,8 @@ def classify_row(row, existing_groups, duplicate_new_keys, duplicate_existing_ke
     return "skip", existing, "没有新信息", [], []
 
 
-def build_plan(excel_rows, books):
-    existing_groups = index_books(books)
+def build_plan(excel_rows, books, speaker_id):
+    existing_groups = index_books(books, speaker_id)
     existing_counts = {key: len(value) for key, value in existing_groups.items() if key}
     new_counts = Counter(row["normalizedTitle"] for row in excel_rows)
     duplicate_existing_keys = {key for key, count in existing_counts.items() if count > 1}
@@ -286,6 +316,8 @@ def build_plan(excel_rows, books):
             "reason": reason,
             "row": row["row"],
             "newTitle": row["title"],
+            "newSpeakerId": row.get("speakerId", speaker_id),
+            "newSpeakerName": row.get("speakerName", DEFAULT_SPEAKER_NAME),
             "newStatus": row.get("status", "active"),
             "newNote": row.get("note", ""),
             "newPreferredVersion": row.get("preferredVersion", "auto"),
@@ -478,6 +510,8 @@ def apply_plan(plan, books, data_dir):
             books.append({
                 "id": book_id,
                 "title": item["newTitle"],
+                "speakerId": item.get("newSpeakerId", DEFAULT_SPEAKER_ID),
+                "speakerName": item.get("newSpeakerName", DEFAULT_SPEAKER_NAME),
                 "note": item.get("newNote", ""),
                 "status": item.get("newStatus", "active"),
                 "preferredVersion": item.get("newPreferredVersion", "auto"),
@@ -515,16 +549,20 @@ def apply_plan(plan, books, data_dir):
     return applied
 
 
-def run_merge(excel_path, data_dir, apply=False):
+def run_merge(excel_path, data_dir, apply=False, speaker_id=DEFAULT_SPEAKER_ID, speaker_name=DEFAULT_SPEAKER_NAME):
     data_dir = Path(data_dir)
+    speaker_id, speaker_name = normalize_speaker_args(speaker_id, speaker_name)
+    ensure_speaker(data_dir, speaker_id, speaker_name)
     books_path = data_dir / "books.json"
     books = json.loads(books_path.read_text(encoding="utf-8")) if books_path.exists() else []
     run_dir = create_run_dir(data_dir)
 
-    excel_info = read_excel_rows(excel_path, run_dir, data_dir)
-    plan = build_plan(excel_info["rows"], books)
+    excel_info = read_excel_rows(excel_path, run_dir, data_dir, speaker_id, speaker_name)
+    plan = build_plan(excel_info["rows"], books, speaker_id)
     summary = summarize(plan, excel_info)
 
+    summary["speakerId"] = speaker_id
+    summary["speakerName"] = speaker_name
     (run_dir / "merge-summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     (run_dir / "merge-plan.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
     (run_dir / "merge-preview.html").write_text(build_preview_html(summary, plan, run_dir), encoding="utf-8")
@@ -546,8 +584,10 @@ def main():
     parser.add_argument("excel", help="Path to the new .xlsx file")
     parser.add_argument("--data", default="data", help="Data directory containing books.json and covers/")
     parser.add_argument("--apply", action="store_true", help="Apply safe add/fill actions after generating the plan")
+    parser.add_argument("--speaker-id", default=DEFAULT_SPEAKER_ID, help="Lecturer/speaker id for this Excel")
+    parser.add_argument("--speaker-name", default=DEFAULT_SPEAKER_NAME, help="Lecturer/speaker name for this Excel")
     args = parser.parse_args()
-    run_merge(Path(args.excel), Path(args.data), apply=args.apply)
+    run_merge(Path(args.excel), Path(args.data), apply=args.apply, speaker_id=args.speaker_id, speaker_name=args.speaker_name)
 
 
 if __name__ == "__main__":

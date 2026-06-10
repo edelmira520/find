@@ -1,4 +1,9 @@
 let books = [];
+let speakers = [];
+const ALL_SPEAKER = { id: "all", name: "全部" };
+const DEFAULT_SPEAKER = { id: "fandeng", name: "樊登" };
+let currentSpeaker = ALL_SPEAKER;
+let editingSpeaker = null;
 let recognizedTitles = [];
 let currentResults = [];
 let activeResultFilter = "all";
@@ -81,6 +86,225 @@ function errorMessage(error, fallback = "操作失败") {
 
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 const ALLOWED_UPLOAD_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
+function normalizeSpeaker(speaker) {
+  return {
+    id: String(speaker?.id || DEFAULT_SPEAKER.id).trim() || DEFAULT_SPEAKER.id,
+    name: String(speaker?.name || DEFAULT_SPEAKER.name).trim() || DEFAULT_SPEAKER.name,
+  };
+}
+
+function bookSpeakerId(book) {
+  return String(book?.speakerId || DEFAULT_SPEAKER.id).trim() || DEFAULT_SPEAKER.id;
+}
+
+function bookSpeakerName(book) {
+  return String(book?.speakerName || DEFAULT_SPEAKER.name).trim() || DEFAULT_SPEAKER.name;
+}
+
+function isAllSpeaker() {
+  return currentSpeaker.id === ALL_SPEAKER.id;
+}
+
+function resultSpeakerLine(book) {
+  return isAllSpeaker() && book ? `<div class="meta">讲书人：${escapeHtml(bookSpeakerName(book))}</div>` : "";
+}
+
+function currentSpeakerBooks() {
+  if (isAllSpeaker()) return books;
+  return books.filter(book => bookSpeakerId(book) === currentSpeaker.id);
+}
+
+function renderSpeakerSelect() {
+  const select = $("#speakerSelect");
+  if (!select) return;
+  select.innerHTML = "";
+  const allOption = document.createElement("option");
+  allOption.value = ALL_SPEAKER.id;
+  allOption.textContent = ALL_SPEAKER.name;
+  select.append(allOption);
+  speakers.forEach(speaker => {
+    const option = document.createElement("option");
+    option.value = speaker.id;
+    option.textContent = speaker.name;
+    select.append(option);
+  });
+  select.value = currentSpeaker.id;
+}
+
+function renderBookSpeakerSelect(selectedSpeaker = editingSpeaker) {
+  const select = $("#bookSpeaker");
+  if (!select) return;
+  select.innerHTML = "";
+  const selected = selectedSpeaker ? normalizeSpeaker(selectedSpeaker) : null;
+  const options = [...speakers];
+  if (selected && !options.some(speaker => speaker.id === selected.id)) {
+    options.push(selected);
+  }
+  if (!selected) {
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "请选择讲书人";
+    select.append(placeholder);
+  }
+  options.forEach(speaker => {
+    const option = document.createElement("option");
+    option.value = speaker.id;
+    option.textContent = speaker.name;
+    select.append(option);
+  });
+  select.value = selected?.id || "";
+  select.disabled = options.length === 0;
+}
+
+function setEditingSpeaker(speaker) {
+  editingSpeaker = speaker ? normalizeSpeaker(speaker) : null;
+  renderBookSpeakerSelect(editingSpeaker);
+  const speakerText = editingSpeaker ? `讲书人：${editingSpeaker.name}` : "请在表单中选择讲书人。";
+  $("#editorHint").textContent = editingBook
+    ? `维护三个封面位和展示规则。${speakerText}`
+    : `新增一条素材库记录，先填写书名和讲书人，再逐步补齐封面。`;
+}
+
+function setCurrentSpeaker(speaker) {
+  currentSpeaker = speaker?.id === ALL_SPEAKER.id ? ALL_SPEAKER : normalizeSpeaker(speaker);
+  renderSpeakerSelect();
+  resetEditor();
+  renderManageList();
+  currentResults = [];
+  renderResults();
+  showStatus(`已切换到讲书人：${currentSpeaker.name}`, "success");
+}
+
+async function loadSpeakers() {
+  try {
+    const response = await fetch("/api/speakers");
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || "讲书人列表加载失败");
+    }
+    speakers = (await response.json()).map(normalizeSpeaker);
+    if (!speakers.length) speakers = [DEFAULT_SPEAKER];
+    if (!isAllSpeaker()) {
+      currentSpeaker = speakers.find(speaker => speaker.id === currentSpeaker.id) || ALL_SPEAKER;
+    }
+    renderSpeakerSelect();
+    renderBookSpeakerSelect();
+  } catch (error) {
+    speakers = [DEFAULT_SPEAKER];
+    currentSpeaker = ALL_SPEAKER;
+    renderSpeakerSelect();
+    renderBookSpeakerSelect();
+    showStatus(errorMessage(error, "讲书人列表加载失败"), "error");
+  }
+}
+
+async function createSpeaker() {
+  try {
+    const speaker = await openSpeakerDialog({
+      title: "新增讲书人",
+      hint: "新增后可以在顶部筛选，也可以给书籍或批量草稿指定归属。",
+      createOnly: true,
+    });
+    if (speaker) setCurrentSpeaker(speaker);
+  } catch (error) {
+    showStatus(errorMessage(error, "新增讲书人失败"), "error");
+  }
+}
+
+async function resolveSpeakerByName(name) {
+  const cleanName = String(name || "").trim();
+  if (!cleanName) return null;
+  const existing = speakers.find(speaker => speaker.name === cleanName || speaker.id === cleanName);
+  if (existing) return existing;
+  const response = await fetch("/api/speakers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: cleanName }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || "新增讲书人失败");
+  }
+  const speaker = normalizeSpeaker(await response.json());
+  await loadSpeakers();
+  return speaker;
+}
+
+async function chooseTargetSpeaker(actionText = "新增书籍") {
+  if (!isAllSpeaker()) return currentSpeaker;
+  return openSpeakerDialog({
+    title: "选择讲书人",
+    hint: `${actionText}需要归属到一个具体讲书人。可以选择已有讲书人，也可以直接新增。`,
+    createOnly: false,
+  });
+}
+
+function fillSpeakerDialogOptions() {
+  const select = $("#speakerDialogSelect");
+  if (!select) return;
+  select.innerHTML = `<option value="">不选择已有，直接新增</option>`;
+  speakers.forEach(speaker => {
+    const option = document.createElement("option");
+    option.value = speaker.id;
+    option.textContent = speaker.name;
+    select.append(option);
+  });
+}
+
+function openSpeakerDialog(options = {}) {
+  const dialog = $("#speakerDialog");
+  const form = $("#speakerForm");
+  const input = $("#speakerDialogName");
+  const select = $("#speakerDialogSelect");
+  const existingField = $("#speakerExistingField");
+  if (!dialog || !form || !input || !select) return Promise.resolve(null);
+
+  $("#speakerDialogTitle").textContent = options.title || "选择讲书人";
+  $("#speakerDialogHint").textContent = options.hint || "请选择或新增一个具体讲书人。";
+  existingField.hidden = Boolean(options.createOnly);
+  fillSpeakerDialogOptions();
+  select.value = "";
+  input.value = "";
+
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      form.onsubmit = null;
+      dialog.removeEventListener("close", handleClose);
+      resolve(value);
+    };
+    const handleClose = () => finish(null);
+
+    form.onsubmit = async event => {
+      event.preventDefault();
+      const name = input.value.trim();
+      const selected = speakers.find(speaker => speaker.id === select.value);
+      try {
+        if (!options.createOnly && selected && !name) {
+          finish(selected);
+          dialog.close();
+          return;
+        }
+        if (!name) {
+          showStatus(options.createOnly ? "请输入讲书人名称" : "请选择已有讲书人，或输入新讲书人名称", "error");
+          return;
+        }
+        const speaker = await resolveSpeakerByName(name);
+        finish(speaker);
+        dialog.close();
+      } catch (error) {
+        showStatus(errorMessage(error, "讲书人保存失败"), "error");
+      }
+    };
+
+    dialog.addEventListener("close", handleClose);
+    dialog.showModal();
+    input.focus();
+  });
+}
 
 function absoluteAssetUrl(path) {
   if (!path) return "";
@@ -205,8 +429,12 @@ async function loadBooks() {
       const error = await response.json().catch(() => ({}));
       throw new Error(error.error || "资料库加载失败");
     }
-    books = await response.json();
-    showStatus("资料库已加载", "success");
+    books = (await response.json()).map(book => ({
+      ...book,
+      speakerId: book.speakerId || "fandeng",
+      speakerName: book.speakerName || "樊登",
+    }));
+    showStatus(`资料库已加载：${currentSpeaker.name}`, "success");
     renderManageList();
     if (selectedBookId) {
       const fresh = books.find(book => book.id === selectedBookId);
@@ -312,7 +540,7 @@ function similarity(a, b) {
 
 function matchTitle(inputTitle) {
   const inputKey = normalize(inputTitle);
-  const candidates = books
+  const candidates = currentSpeakerBooks()
     .map(book => ({ book, score: similarity(inputTitle, book.title) }))
     .filter(item => item.score >= 0.38)
     .sort((a, b) => {
@@ -397,6 +625,7 @@ function renderResultCard(result, index) {
     <div class="card-body">
       <h3>${escapeHtml(result.inputTitle)}</h3>
       <div class="meta">${book ? `匹配到：${escapeHtml(book.title)}` : "资料库暂无匹配"}</div>
+      ${resultSpeakerLine(book)}
       ${offline ? `<div class="meta offline-text">平台已下架</div>` : ""}
       <div class="meta">${manualMissing ? "手动选择的版本缺少平面封面" : `当前版本：${versionLabels[version]}`}</div>
       ${noteBadge ? `<div class="note-chip">${escapeHtml(noteBadge)}</div>` : ""}
@@ -460,7 +689,11 @@ function renderResultCard(result, index) {
     add.type = "button";
     add.className = "primary missing-add";
     add.textContent = "新增这本书";
-    add.addEventListener("click", () => openBookEditor(null, result.inputTitle));
+    add.addEventListener("click", async () => {
+      const speaker = await chooseTargetSpeaker("新增书籍");
+      if (!speaker) return;
+      openBookEditor(null, result.inputTitle, speaker);
+    });
     actions.append(add);
   }
 
@@ -476,7 +709,7 @@ function renderCandidate(candidate, index, result) {
     ${covers.flat ? `<img ${imageAttrs(covers.flat, "")}>` : `<span class="candidate-empty">无图</span>`}
     <span>
       <strong>${escapeHtml(candidate.book.title)}</strong>
-      <small>${isOffline(candidate.book) ? "已下架 · " : ""}${versionLabels[covers.version]} · ${Math.round(candidate.score * 100)}%</small>
+      <small>${isAllSpeaker() ? `${escapeHtml(bookSpeakerName(candidate.book))} · ` : ""}${isOffline(candidate.book) ? "已下架 · " : ""}${versionLabels[covers.version]} · ${Math.round(candidate.score * 100)}%</small>
     </span>
   `;
   button.addEventListener("click", () => {
@@ -496,9 +729,11 @@ function openDetail(result) {
         <button class="primary" id="detailAddMissing">新增这本书</button>
       </div>
     `;
-    $("#detailAddMissing").addEventListener("click", () => {
+    $("#detailAddMissing").addEventListener("click", async () => {
       $("#detailDialog").close();
-      openBookEditor(null, result.inputTitle);
+      const speaker = await chooseTargetSpeaker("新增书籍");
+      if (!speaker) return;
+      openBookEditor(null, result.inputTitle, speaker);
     });
     $("#detailDialog").showModal();
     return;
@@ -507,6 +742,7 @@ function openDetail(result) {
   const original3d = book.covers?.original?.threeD || "";
   const manualMissing = preferredVersionMissingFlat(book);
   const offline = isOffline(book);
+  const speakerNote = isAllSpeaker() ? `<div class="note"><strong>讲书人</strong><p>${escapeHtml(bookSpeakerName(book))}</p></div>` : "";
   const mismatchNote = covers.version === "custom" && original3d
     ? `<div class="note">自制平封展示中，原版立封不跟随。</div>`
     : "";
@@ -525,6 +761,7 @@ function openDetail(result) {
           ${covers.threeD ? `<button class="${offline ? "ghost" : "copy-btn"}" id="copyDetailThree" type="button">复制立封</button>` : ""}
           ${covers.flat ? `<button class="ghost" id="copyDetailLink" type="button">复制图片链接</button>` : ""}
         </div>
+        ${speakerNote}
         ${fullNote ? `<div class="note full-note"><strong>备注</strong><p>${escapeHtml(fullNote)}</p></div>` : ""}
         ${offlineNote}
         ${manualMissingNote}
@@ -546,7 +783,7 @@ function renderManageList() {
   const query = normalize($("#manageSearch").value);
   const list = $("#bookList");
   list.innerHTML = "";
-  books
+  currentSpeakerBooks()
     .filter(book => !query || normalize(book.title).includes(query))
     .forEach(book => {
       const row = document.createElement("button");
@@ -555,12 +792,13 @@ function renderManageList() {
       const covers = displayCovers(book);
       const offline = isOffline(book);
       const noteBadge = noteBadgeText(book);
+      const speakerMeta = isAllSpeaker() ? `${bookSpeakerName(book)} · ` : "";
       const thumb = covers.flat ? `<img ${imageAttrs(covers.flat, "")}>` : `<div class="thumb-placeholder">无图</div>`;
       row.innerHTML = `
         ${thumb}
         <span>
           <strong>${escapeHtml(book.title)}${offline ? `<em class="status-pill offline">已下架</em>` : `<em class="status-pill active">正常</em>`}</strong>
-          <small>${versionLabels[covers.version]} · ${covers.threeD ? "有立体封" : "无立体封"}${noteBadge ? ` · ${escapeHtml(noteBadge)}` : ""}</small>
+          <small>${escapeHtml(speakerMeta)}${versionLabels[covers.version]} · ${covers.threeD ? "有立体封" : "无立体封"}${noteBadge ? ` · ${escapeHtml(noteBadge)}` : ""}</small>
         </span>
       `;
       row.addEventListener("click", () => openBookEditor(book));
@@ -568,15 +806,20 @@ function renderManageList() {
     });
 }
 
-function openBookEditor(book, presetTitle = "") {
+function openBookEditor(book, presetTitle = "", speakerOverride = null) {
   editingBook = book;
+  const speaker = book
+    ? { id: bookSpeakerId(book), name: bookSpeakerName(book) }
+    : speakerOverride
+      ? normalizeSpeaker(speakerOverride)
+      : (!isAllSpeaker() ? currentSpeaker : null);
   selectedBookId = book?.id || "";
   returnToMissingTitle = presetTitle;
   Object.keys(uploadState).forEach(key => delete uploadState[key]);
-  $("#dialogTitle").textContent = book ? "编辑书籍" : "新增书籍";
-  $("#editorHint").textContent = book ? "维护三个封面位和展示规则。" : "先保存草稿，再逐步补齐封面。";
+  $("#dialogTitle").textContent = book ? "编辑书籍" : "新增素材";
   $("#bookId").value = book ? book.id : "";
   $("#bookTitle").value = book ? book.title : presetTitle;
+  setEditingSpeaker(speaker);
   $("#bookStatus").value = bookStatus(book);
   $("#bookNote").value = bookNote(book);
   $("#preferredVersion").value = normalizePreferredVersion(book?.preferredVersion || "auto");
@@ -592,8 +835,8 @@ function resetEditor() {
   returnToMissingTitle = "";
   Object.keys(uploadState).forEach(key => delete uploadState[key]);
   $("#dialogTitle").textContent = "选择一本书开始维护";
-  $("#editorHint").textContent = "左侧选择书籍，或新增一本待补封面的资料。";
   $("#bookForm").reset();
+  setEditingSpeaker(null);
   $("#bookId").value = "";
   $("#bookStatus").value = "active";
   $("#bookNote").value = "";
@@ -633,8 +876,12 @@ function collectBookFromForm() {
   for (const [key, [version, slot]] of Object.entries(slotMap())) {
     covers[version][slot] = getSlotValue(key);
   }
+  const selectedSpeakerId = $("#bookSpeaker").value;
+  const speaker = speakers.find(item => item.id === selectedSpeakerId) || editingSpeaker;
   return {
     id: $("#bookId").value,
+    speakerId: speaker?.id || "",
+    speakerName: speaker?.name || "",
     title: $("#bookTitle").value.trim(),
     note: $("#bookNote").value.trim(),
     status: $("#bookStatus").value,
@@ -730,6 +977,9 @@ async function saveBook(event) {
   const isEdit = Boolean(book.id);
   const pendingReturnTitle = returnToMissingTitle;
   try {
+    if (!book.speakerId || book.speakerId === ALL_SPEAKER.id || book.speakerName === ALL_SPEAKER.name) {
+      throw new Error("请选择讲书人后再保存");
+    }
     const response = await fetch(isEdit ? `/api/books/${encodeURIComponent(book.id)}` : "/api/books", {
       method: isEdit ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
@@ -783,6 +1033,20 @@ async function createBatchDrafts(event) {
   if (!titles.length) return;
   submitButton.disabled = true;
   submitButton.textContent = "生成中…";
+  let targetSpeaker;
+  try {
+    targetSpeaker = await chooseTargetSpeaker("批量草稿");
+  } catch (error) {
+    showStatus(errorMessage(error, "讲书人选择失败"), "error");
+    submitButton.disabled = false;
+    submitButton.textContent = originalText;
+    return;
+  }
+  if (!targetSpeaker || targetSpeaker.id === ALL_SPEAKER.id) {
+    submitButton.disabled = false;
+    submitButton.textContent = originalText;
+    return;
+  }
   const pastedCounts = titles.reduce((acc, title) => {
     const key = normalize(title);
     acc[key] = acc[key] || { title, count: 0 };
@@ -790,7 +1054,9 @@ async function createBatchDrafts(event) {
     return acc;
   }, {});
   const repeatedInPaste = Object.values(pastedCounts).filter(item => item.count > 1).map(item => `${item.title}（本次 ${item.count} 次）`);
-  const existingKeys = new Map(books.map(book => [normalize(book.title), book.title]));
+  const existingKeys = new Map(books
+    .filter(book => bookSpeakerId(book) === targetSpeaker.id)
+    .map(book => [normalize(book.title), book.title]));
   const alreadyExists = [...new Set(titles.filter(title => existingKeys.has(normalize(title))).map(title => existingKeys.get(normalize(title))))];
   const warnings = [];
   if (repeatedInPaste.length) warnings.push(`本次粘贴重复：\n${repeatedInPaste.join("\n")}`);
@@ -804,7 +1070,7 @@ async function createBatchDrafts(event) {
     const response = await fetch("/api/books/batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ titles }),
+      body: JSON.stringify({ titles, speakerId: targetSpeaker.id, speakerName: targetSpeaker.name }),
     });
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
@@ -813,7 +1079,7 @@ async function createBatchDrafts(event) {
     $("#batchDialog").close();
     $("#batchTitles").value = "";
     await loadBooks();
-    showStatus(`已生成 ${titles.length} 本草稿`, "success");
+    showStatus(`已为${targetSpeaker.name}生成 ${titles.length} 本草稿`, "success");
   } catch (error) {
     showStatus(errorMessage(error, "批量新增失败"), "error");
   } finally {
@@ -873,12 +1139,31 @@ function bindEvents() {
     });
   });
 
+  $("#speakerSelect").addEventListener("change", event => {
+    if (event.target.value === ALL_SPEAKER.id) {
+      setCurrentSpeaker(ALL_SPEAKER);
+      return;
+    }
+    const speaker = speakers.find(item => item.id === event.target.value);
+    if (speaker) setCurrentSpeaker(speaker);
+  });
+  $("#addSpeaker").addEventListener("click", createSpeaker);
+  $$("[data-close-speaker]").forEach(button => {
+    button.addEventListener("click", () => $("#speakerDialog").close());
+  });
   $("#manageSearch").addEventListener("input", renderManageList);
-  $("#newBook").addEventListener("click", () => openBookEditor());
+  $("#newBook").addEventListener("click", () => {
+    const speaker = isAllSpeaker() ? null : currentSpeaker;
+    openBookEditor(null, "", speaker);
+  });
   $("#resetEditor").addEventListener("click", resetEditor);
   $("#bookForm").addEventListener("submit", saveBook);
   $("#deleteBook").addEventListener("click", deleteCurrentBook);
   $("#bookStatus").addEventListener("change", updateActualVersionPreview);
+  $("#bookSpeaker").addEventListener("change", event => {
+    const speaker = speakers.find(item => item.id === event.target.value);
+    if (speaker) setEditingSpeaker(speaker);
+  });
   $("#bookNote").addEventListener("input", updateActualVersionPreview);
   $("#bookTitle").addEventListener("input", updateActualVersionPreview);
   $("#batchDrafts").addEventListener("click", () => $("#batchDialog").showModal());
@@ -965,4 +1250,4 @@ function bindEvents() {
 bindEvents();
 renderTitlePreview();
 resetEditor();
-loadBooks();
+loadSpeakers().then(loadBooks);
