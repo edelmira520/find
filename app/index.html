@@ -71,7 +71,6 @@
               <button class="filter active" data-filter="all">显示全部</button>
               <button class="filter" data-filter="possible">只看待确认</button>
               <button class="filter" data-filter="missing">只看未找到</button>
-              <button class="filter" data-filter="offline">只看已下架</button>
             </div>
           </div>
           <div id="results" class="results-grid"></div>
@@ -110,22 +109,15 @@
                 <span>讲书人</span>
                 <select id="bookSpeaker" name="bookSpeaker" autocomplete="off" required></select>
               </label>
-              <label class="field">
-                <span>书籍状态</span>
-                <select id="bookStatus" name="bookStatus" autocomplete="off">
-                  <option value="active">正常可用</option>
-                  <option value="offline">平台已下架</option>
-                </select>
-              </label>
+              <input id="bookStatus" name="bookStatus" type="hidden" value="active">
               <label class="field">
                 <span>备注</span>
                 <textarea id="bookNote" name="bookNote" autocomplete="off" placeholder="Excel M列备注，可记录内部说明"></textarea>
               </label>
-              <input id="preferredVersion" name="preferredVersion" type="hidden" value="auto">
               <div class="upload-grid">
-                <div class="upload-slot" data-slot="custom_flat">
+                <div class="upload-slot" data-slot="cover">
                   <div class="slot-head">
-                    <h3>自制平封</h3>
+                    <h3>书封</h3>
                     <button class="clear-slot" type="button">清空</button>
                   </div>
                   <div class="drop-zone">拖拽图片到这里，或点击选择</div>
@@ -133,23 +125,10 @@
                   <input class="cover-path" name="coverPath" type="url" inputmode="url" autocomplete="off" placeholder="或输入图片链接">
                   <img alt="">
                   <div class="slot-status">缺失</div>
-                  <button class="set-display" type="button">设为展示</button>
                 </div>
-                <div class="upload-slot" data-slot="original_flat">
+                <div class="upload-slot" data-slot="standing">
                   <div class="slot-head">
-                    <h3>原版平封</h3>
-                    <button class="clear-slot" type="button">清空</button>
-                  </div>
-                  <div class="drop-zone">拖拽图片到这里，或点击选择</div>
-                  <input type="file" accept="image/jpeg,image/png,image/webp,image/gif">
-                  <input class="cover-path" name="coverPath" type="url" inputmode="url" autocomplete="off" placeholder="或输入图片链接">
-                  <img alt="">
-                  <div class="slot-status">缺失</div>
-                  <button class="set-display" type="button">设为展示</button>
-                </div>
-                <div class="upload-slot" data-slot="original_3d">
-                  <div class="slot-head">
-                    <h3>原版立封</h3>
+                    <h3>立封</h3>
                     <button class="clear-slot" type="button">清空</button>
                   </div>
                   <div class="drop-zone">拖拽图片到这里，或点击选择</div>

@@ -651,11 +651,6 @@ select:hover {
   border-color: #efc8c2;
 }
 
-.result-card.offline {
-  border-color: #d9aaa4;
-  background: #fff8f6;
-}
-
 .cover-stage {
   position: relative;
   min-height: 286px;
@@ -742,11 +737,6 @@ select:hover {
   color: var(--danger);
 }
 
-.status-badge.offline {
-  background: var(--danger);
-  color: #fff;
-}
-
 .card-body {
   min-height: 154px;
   padding: 13px 14px 14px;
@@ -798,11 +788,6 @@ select:hover {
   background: var(--soft);
   color: #5d5449;
   font-size: 12px;
-  font-weight: 750;
-}
-
-.offline-text {
-  color: var(--danger);
   font-weight: 750;
 }
 
@@ -945,26 +930,6 @@ select:hover {
   color: var(--muted);
 }
 
-.status-pill {
-  display: inline-flex;
-  margin-left: 6px;
-  padding: 2px 6px;
-  border-radius: 999px;
-  font-style: normal;
-  font-size: 11px;
-  vertical-align: 1px;
-}
-
-.status-pill.active {
-  color: var(--ok);
-  background: var(--primary-soft);
-}
-
-.status-pill.offline {
-  color: var(--danger);
-  background: var(--danger-soft);
-}
-
 .editor-panel {
   min-height: 620px;
 }
@@ -998,12 +963,6 @@ select:hover {
   color: var(--danger);
 }
 
-.offline-note {
-  background: #fff1ee;
-  color: var(--danger);
-  border: 1px solid #efc4bf;
-}
-
 .full-note strong {
   display: block;
   margin-bottom: 4px;
@@ -1016,7 +975,7 @@ select:hover {
 
 .upload-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 

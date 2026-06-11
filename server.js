@@ -12,6 +12,7 @@ const BOOKS_PATH = path.join(DATA_DIR, "books.json");
 const SPEAKERS_PATH = path.join(DATA_DIR, "speakers.json");
 const DEFAULT_SPEAKER = { id: "fandeng", name: "樊登" };
 const PORT = Number(process.env.PORT || 4173);
+const REMOVED_STATUSES = new Set(["下架", "已下架", "停售", "不上架", "停用", "removed", "discontinued", "inactive", "offline"]);
 
 const MAX_JSON_BODY_BYTES = 50 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
@@ -85,7 +86,9 @@ function readBooks() {
   try {
     const parsed = JSON.parse(fs.readFileSync(BOOKS_PATH, "utf8") || "[]");
     if (!Array.isArray(parsed)) throw new Error("books.json must contain an array");
-    return parsed.map(book => normalizeSpeakerFields(book));
+    return parsed
+      .map(book => normalizeSpeakerFields(book))
+      .filter(shouldKeepBook);
   } catch (error) {
     const wrapped = new Error(`资料库文件 data/books.json 格式不正确：${error.message}`);
     wrapped.statusCode = 500;
@@ -152,8 +155,9 @@ function hasConcreteSpeaker(book) {
 function writeBooks(books) {
   ensureData();
   backupBooks();
+  const activeBooks = books.filter(shouldKeepBook);
   const tempPath = `${BOOKS_PATH}.${process.pid}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(books, null, 2), "utf8");
+  fs.writeFileSync(tempPath, JSON.stringify(activeBooks, null, 2), "utf8");
   fs.renameSync(tempPath, BOOKS_PATH);
 }
 
@@ -187,8 +191,33 @@ function nextBookId(books) {
 
 function defaultCovers() {
   return {
-    custom: { flat: "", threeD: "" },
-    original: { flat: "", threeD: "" },
+    cover: "",
+    standing: "",
+  };
+}
+
+function normalizeBookStatus(status) {
+  return String(status || "").trim().toLowerCase();
+}
+
+function shouldKeepBook(book) {
+  return !REMOVED_STATUSES.has(normalizeBookStatus(book && book.status));
+}
+
+function normalizeNoteText(value) {
+  return String(value || "")
+    .replace(/优先使用\s*原版书封/g, "")
+    .replace(/优先使用\s*书封/g, "")
+    .replace(/原版|自制|平封/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function normalizeCovers(inputCovers = {}) {
+  return {
+    cover: String(inputCovers.cover || inputCovers.original?.flat || "").trim(),
+    standing: String(inputCovers.standing || inputCovers.original?.threeD || "").trim(),
   };
 }
 
@@ -200,19 +229,16 @@ function normalizeBook(input, existing, books) {
   };
   book.title = String(input.title || "").trim();
   book.note = Object.prototype.hasOwnProperty.call(input, "note")
-    ? String(input.note || "").trim()
-    : String(book.note || "").trim();
-  book.status = ["active", "offline"].includes(input.status) ? input.status : (book.status || "active");
+    ? normalizeNoteText(input.note)
+    : normalizeNoteText(book.note);
+  book.status = Object.prototype.hasOwnProperty.call(input, "status")
+    ? String(input.status || "").trim()
+    : (book.status || "active");
   book.speakerId = String(input.speakerId || book.speakerId || DEFAULT_SPEAKER.id).trim() || DEFAULT_SPEAKER.id;
   book.speakerName = String(input.speakerName || book.speakerName || DEFAULT_SPEAKER.name).trim() || DEFAULT_SPEAKER.name;
-  book.preferredVersion = ["auto", "custom", "original"].includes(input.preferredVersion)
-    ? input.preferredVersion
-    : "auto";
   const inputCovers = input.covers || {};
-  book.covers = {
-    custom: { ...defaultCovers().custom, ...(inputCovers.custom || {}) },
-    original: { ...defaultCovers().original, ...(inputCovers.original || {}) },
-  };
+  book.covers = normalizeCovers(inputCovers);
+  delete book.preferredVersion;
   book.updatedAt = now;
   return book;
 }
@@ -222,8 +248,12 @@ function localCoverPaths(book) {
   return [
     covers.custom && covers.custom.flat,
     covers.custom && covers.custom.threeD,
+    covers.fallback && covers.fallback.flat,
+    covers.fallback && covers.fallback.threeD,
     covers.original && covers.original.flat,
     covers.original && covers.original.threeD,
+    covers.cover,
+    covers.standing,
   ].filter(value => value && !/^https?:\/\//i.test(value) && !String(value).startsWith("data:"));
 }
 
@@ -254,6 +284,27 @@ function cleanupUnreferencedCovers(deletedBook, remainingBooks) {
   cleanupUnreferencedCoverPaths(localCoverPaths(deletedBook), remainingBooks);
 }
 
+function migrateBooksOnStartup() {
+  ensureData();
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(BOOKS_PATH, "utf8") || "[]");
+  } catch (error) {
+    console.warn(`启动清理跳过：books.json 无法解析：${error.message}`);
+    return;
+  }
+  if (!Array.isArray(parsed)) return;
+  const oldPaths = parsed.flatMap(localCoverPaths);
+  const normalized = parsed
+    .map(book => normalizeSpeakerFields(book))
+    .filter(shouldKeepBook)
+    .map(book => normalizeBook(book, book, parsed));
+  if (JSON.stringify(parsed) !== JSON.stringify(normalized)) {
+    writeBooks(normalized);
+  }
+  cleanupUnreferencedCoverPaths(oldPaths, normalized);
+}
+
 function saveDataUrl(dataUrl, bookId, slotKey) {
   if (!dataUrl || !dataUrl.startsWith("data:")) return "";
   const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUrl);
@@ -282,14 +333,13 @@ function saveDataUrl(dataUrl, bookId, slotKey) {
 
 function processUploads(book, uploads) {
   const slots = [
-    ["custom", "flat", "custom_flat"],
-    ["original", "flat", "original_flat"],
-    ["original", "threeD", "original_3d"],
+    "cover",
+    "standing",
   ];
-  for (const [version, slot, key] of slots) {
+  for (const key of slots) {
     const payload = uploads && uploads[key];
     if (payload && payload.dataUrl) {
-      book.covers[version][slot] = saveDataUrl(payload.dataUrl, book.id, key);
+      book.covers[key] = saveDataUrl(payload.dataUrl, book.id, key);
     }
   }
 }
@@ -365,7 +415,7 @@ async function handleApi(req, res) {
     const books = readBooks();
     const created = [];
     for (const title of titles) {
-      const book = normalizeBook({ title, speakerId, speakerName, status: "active", preferredVersion: "auto", covers: defaultCovers() }, null, books);
+      const book = normalizeBook({ title, speakerId, speakerName, status: "active", covers: defaultCovers() }, null, books);
       if (!book.title) continue;
       books.push(book);
       created.push(book);
@@ -443,6 +493,7 @@ async function handleApi(req, res) {
 }
 
 ensureData();
+migrateBooksOnStartup();
 const server = http.createServer((req, res) => {
   if (req.url.startsWith("/api/")) {
     handleApi(req, res).catch(error => send(res, error.statusCode || 500, JSON.stringify({ error: error.message })));

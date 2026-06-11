@@ -18,15 +18,16 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
 
 const versionLabels = {
-  custom: "自制版",
-  original: "原版",
+  cover: "书封",
   noCover: "缺封面",
 };
 
+const REMOVED_STATUSES = new Set(["下架", "已下架", "停售", "不上架", "停用", "removed", "discontinued", "inactive", "offline"]);
+
 function emptyCovers() {
   return {
-    custom: { flat: "", threeD: "" },
-    original: { flat: "", threeD: "" },
+    cover: "",
+    standing: "",
   };
 }
 
@@ -125,8 +126,9 @@ function resultSpeakerLine(book) {
 }
 
 function currentSpeakerBooks() {
-  if (isAllSpeaker()) return books;
-  return books.filter(book => bookSpeakerId(book) === currentSpeaker.id);
+  const activeBooks = books.filter(shouldKeepBook);
+  if (isAllSpeaker()) return activeBooks;
+  return activeBooks.filter(book => bookSpeakerId(book) === currentSpeaker.id);
 }
 
 function renderSpeakerSelect() {
@@ -547,9 +549,6 @@ async function copyCover(path, label, trigger) {
 }
 
 async function copyCoverFromResult(result, path, label, trigger) {
-  if (result?.status === "offline" && !confirm("这本书已在平台下架，确定仍要复制封面吗？")) {
-    return;
-  }
   await copyCover(path, label, trigger);
 }
 
@@ -566,18 +565,17 @@ function flashCopyButton(button, text) {
 
 function slotMap() {
   return {
-    custom_flat: ["custom", "flat"],
-    original_flat: ["original", "flat"],
-    original_3d: ["original", "threeD"],
+    cover: "cover",
+    standing: "standing",
   };
 }
 
-function bookStatus(book) {
-  return book?.status === "offline" ? "offline" : "active";
+function normalizeBookStatus(status) {
+  return String(status || "").trim().toLowerCase();
 }
 
-function isOffline(book) {
-  return bookStatus(book) === "offline";
+function shouldKeepBook(book) {
+  return !REMOVED_STATUSES.has(normalizeBookStatus(book?.status));
 }
 
 function bookNote(book) {
@@ -588,35 +586,22 @@ function noteBadgeText(book) {
   return bookNote(book) ? "有备注" : "";
 }
 
-function hasFlat(book, version) {
-  return Boolean(book?.covers?.[version]?.flat);
-}
-
-function preferredVersionMissingFlat(book) {
-  const preferred = book?.preferredVersion || "auto";
-  return preferred !== "auto" && ["custom", "original"].includes(preferred) && !hasFlat(book, preferred);
-}
-
-function normalizePreferredVersion(value) {
-  return ["auto", "custom", "original"].includes(value) ? value : "auto";
+function normalizedCovers(bookOrCovers) {
+  const covers = bookOrCovers?.covers || bookOrCovers || {};
+  return {
+    cover: covers.cover || covers.original?.flat || "",
+    standing: covers.standing || covers.original?.threeD || "",
+  };
 }
 
 function actualVersion(book) {
-  const preferred = normalizePreferredVersion(book?.preferredVersion || "auto");
-  const covers = { ...emptyCovers(), ...(book?.covers || {}) };
-  if (["custom", "original"].includes(preferred)) {
-    return covers[preferred]?.flat ? preferred : "noCover";
-  }
-  if (covers.custom?.flat) return "custom";
-  if (covers.original?.flat) return "original";
-  return "noCover";
+  return normalizedCovers(book).cover ? "cover" : "noCover";
 }
 
 function displayCovers(book) {
   const version = actualVersion(book);
-  const covers = { ...emptyCovers(), ...(book?.covers || {}) };
-  if (version === "custom") return { version, flat: covers.custom.flat, threeD: "" };
-  if (version === "original") return { version, flat: covers.original.flat, threeD: covers.original.threeD || "" };
+  const covers = normalizedCovers(book);
+  if (version === "cover") return { version, flat: covers.cover, threeD: covers.standing };
   return { version, flat: "", threeD: "" };
 }
 
@@ -627,11 +612,13 @@ async function loadBooks() {
       const error = await response.json().catch(() => ({}));
       throw new Error(error.error || "资料库加载失败");
     }
-    books = (await response.json()).map(book => ({
-      ...book,
-      speakerId: book.speakerId || "fandeng",
-      speakerName: book.speakerName || "樊登",
-    }));
+    books = (await response.json())
+      .map(book => ({
+        ...book,
+        speakerId: book.speakerId || "fandeng",
+        speakerName: book.speakerName || "樊登",
+      }))
+      .filter(shouldKeepBook);
     showStatus(`资料库已加载：${currentSpeaker.name}`, "success");
     renderManageList();
     if (selectedBookId) {
@@ -744,13 +731,11 @@ function matchTitle(inputTitle) {
     .sort((a, b) => {
       const aExact = normalize(a.book.title) === inputKey;
       const bExact = normalize(b.book.title) === inputKey;
-      if (aExact && bExact && isOffline(a.book) !== isOffline(b.book)) return isOffline(a.book) ? 1 : -1;
-      if (Math.abs(b.score - a.score) < 0.001 && isOffline(a.book) !== isOffline(b.book)) return isOffline(a.book) ? 1 : -1;
+      if (aExact !== bExact) return aExact ? -1 : 1;
       return b.score - a.score;
     })
     .slice(0, 5);
   const best = candidates[0];
-  if (best && best.score >= 0.55 && isOffline(best.book)) return { inputTitle, status: "offline", book: best.book, candidates };
   if (best && best.score >= 0.88) return { inputTitle, status: "matched", book: best.book, candidates };
   if (best && best.score >= 0.55) return { inputTitle, status: "possible", book: best.book, candidates };
   return { inputTitle, status: "missing", book: null, candidates };
@@ -767,7 +752,7 @@ function resultStats() {
   const stats = currentResults.reduce((acc, result) => {
     acc[result.status] += 1;
     return acc;
-  }, { matched: 0, possible: 0, missing: 0, offline: 0 });
+  }, { matched: 0, possible: 0, missing: 0 });
   stats.total = currentResults.length;
   return stats;
 }
@@ -775,7 +760,7 @@ function resultStats() {
 function renderResults() {
   $("#resultsPanel").classList.toggle("hidden", currentResults.length === 0);
   const stats = resultStats();
-  $("#matchSummary").textContent = `识别 ${stats.total} 本、已匹配 ${stats.matched} 本、已下架 ${stats.offline} 本、待确认 ${stats.possible} 本、未找到 ${stats.missing} 本`;
+  $("#matchSummary").textContent = `识别 ${stats.total} 本、已匹配 ${stats.matched} 本、待确认 ${stats.possible} 本、未找到 ${stats.missing} 本`;
   const visible = currentResults.filter(result => activeResultFilter === "all" || result.status === activeResultFilter);
   $("#results").innerHTML = "";
   visible.forEach(result => {
@@ -787,19 +772,18 @@ function renderResults() {
 function statusLabel(status) {
   if (status === "matched") return "已匹配";
   if (status === "possible") return "待确认";
-  if (status === "offline") return "已下架";
   return "未找到";
 }
 
 function renderCoverStage(result) {
   const { book, status } = result;
   const covers = book ? displayCovers(book) : { version: "noCover", flat: "", threeD: "" };
-  const statusText = status === "offline" ? statusLabel(status) : result.confirmedManually ? "已手动确认" : statusLabel(status);
-  const versionText = book && preferredVersionMissingFlat(book) ? "手选缺平封" : versionLabels[covers.version];
+  const statusText = result.confirmedManually ? "已手动确认" : statusLabel(status);
+  const versionText = versionLabels[covers.version];
   const flat = covers.flat
-    ? `<img class="flat-cover" ${imageAttrs(covers.flat, "平面封面", { eager: true })}>`
+    ? `<img class="flat-cover" ${imageAttrs(covers.flat, "书封", { eager: true })}>`
     : `<div class="no-image">空封面</div>`;
-  const three = covers.threeD ? `<img class="three-cover" ${imageAttrs(covers.threeD, "立体封面")}>` : "";
+  const three = covers.threeD ? `<img class="three-cover" ${imageAttrs(covers.threeD, "立封")}>` : "";
   return `
     <div class="cover-stage">
       ${flat}
@@ -815,8 +799,6 @@ function renderResultCard(result, index) {
   card.className = `result-card ${result.status}`;
   const book = result.book;
   const version = book ? actualVersion(book) : "noCover";
-  const manualMissing = book && preferredVersionMissingFlat(book);
-  const offline = book && isOffline(book);
   const noteBadge = book ? noteBadgeText(book) : "";
   card.innerHTML = `
     ${renderCoverStage(result)}
@@ -824,8 +806,7 @@ function renderResultCard(result, index) {
       <h3>${escapeHtml(result.inputTitle)}</h3>
       <div class="meta">${book ? `匹配到：${escapeHtml(book.title)}` : "资料库暂无匹配"}</div>
       ${resultSpeakerLine(book)}
-      ${offline ? `<div class="meta offline-text">平台已下架</div>` : ""}
-      <div class="meta">${manualMissing ? "手动选择的版本缺少平面封面" : `当前版本：${versionLabels[version]}`}</div>
+      <div class="meta">封面类型：${versionLabels[version]}</div>
       ${noteBadge ? `<div class="note-chip">${escapeHtml(noteBadge)}</div>` : ""}
       ${result.confirmedManually ? `<div class="manual-mark">人工确认</div>` : ""}
       <div class="card-actions"></div>
@@ -837,23 +818,23 @@ function renderResultCard(result, index) {
   const actions = card.querySelector(".card-actions");
   const list = card.querySelector(".candidate-list");
 
-  if (result.status === "matched" || result.status === "offline") {
+  if (result.status === "matched") {
     const covers = displayCovers(book);
     if (covers.flat) {
       const copyFlat = document.createElement("button");
       copyFlat.type = "button";
-      copyFlat.className = result.status === "offline" ? "ghost" : "copy-btn";
-      copyFlat.textContent = "复制平封";
+      copyFlat.className = "copy-btn";
+      copyFlat.textContent = "复制书封";
       copyFlat.addEventListener("click", event => {
         event.stopPropagation();
-        copyCoverFromResult(result, covers.flat, "平封", copyFlat);
+        copyCoverFromResult(result, covers.flat, "书封", copyFlat);
       });
       actions.append(copyFlat);
     }
     if (covers.threeD) {
       const copyThree = document.createElement("button");
       copyThree.type = "button";
-      copyThree.className = result.status === "offline" ? "ghost" : "copy-btn";
+      copyThree.className = "copy-btn";
       copyThree.textContent = "复制立封";
       copyThree.addEventListener("click", event => {
         event.stopPropagation();
@@ -875,7 +856,7 @@ function renderResultCard(result, index) {
     confirm.className = "primary";
     confirm.textContent = "确认此匹配";
     confirm.addEventListener("click", () => {
-      currentResults[index] = { ...result, status: isOffline(result.book) ? "offline" : "matched", confirmedManually: true };
+      currentResults[index] = { ...result, status: "matched", confirmedManually: true };
       renderResults();
     });
     actions.append(confirm);
@@ -907,11 +888,11 @@ function renderCandidate(candidate, index, result) {
     ${covers.flat ? `<img ${imageAttrs(covers.flat, "")}>` : `<span class="candidate-empty">无图</span>`}
     <span>
       <strong>${escapeHtml(candidate.book.title)}</strong>
-      <small>${isAllSpeaker() ? `${escapeHtml(bookSpeakerName(candidate.book))} · ` : ""}${isOffline(candidate.book) ? "已下架 · " : ""}${versionLabels[covers.version]} · ${Math.round(candidate.score * 100)}%</small>
+      <small>${isAllSpeaker() ? `${escapeHtml(bookSpeakerName(candidate.book))} · ` : ""}${versionLabels[covers.version]} · ${Math.round(candidate.score * 100)}%</small>
     </span>
   `;
   button.addEventListener("click", () => {
-    currentResults[index] = { ...result, status: isOffline(candidate.book) ? "offline" : "matched", book: candidate.book, confirmedManually: true };
+    currentResults[index] = { ...result, status: "matched", book: candidate.book, confirmedManually: true };
     renderResults();
   });
   return button;
@@ -937,40 +918,26 @@ function openDetail(result) {
     return;
   }
   const covers = displayCovers(book);
-  const original3d = book.covers?.original?.threeD || "";
-  const manualMissing = preferredVersionMissingFlat(book);
-  const offline = isOffline(book);
   const speakerNote = isAllSpeaker() ? `<div class="note"><strong>讲书人</strong><p>${escapeHtml(bookSpeakerName(book))}</p></div>` : "";
-  const mismatchNote = covers.version === "custom" && original3d
-    ? `<div class="note">自制平封展示中，原版立封不跟随。</div>`
-    : "";
-  const manualMissingNote = manualMissing
-    ? `<div class="note danger-note">手动选择的版本缺少平面封面。</div>`
-    : "";
-  const offlineNote = offline ? `<div class="note offline-note">这本书已在平台下架。</div>` : "";
   const fullNote = bookNote(book);
   $("#detailContent").innerHTML = `
     <div class="detail-grid">
-      <div class="detail-cover">${covers.flat ? `<img ${imageAttrs(covers.flat, "平面封面")}>` : `<div class="no-image large">缺平面封面</div>`}</div>
+      <div class="detail-cover">${covers.flat ? `<img ${imageAttrs(covers.flat, "书封")}>` : `<div class="no-image large">缺书封</div>`}</div>
       <div class="detail-side">
-        <div class="detail-3d">${covers.threeD ? `<img ${imageAttrs(covers.threeD, "立体封面")}>` : `<div class="no-image">无当前立体封</div>`}</div>
+        <div class="detail-3d">${covers.threeD ? `<img ${imageAttrs(covers.threeD, "立封")}>` : `<div class="no-image">无立封</div>`}</div>
         <div class="detail-copy-actions">
-          ${covers.flat ? `<button class="${offline ? "ghost" : "copy-btn"}" id="copyDetailFlat" type="button">复制平封</button>` : ""}
-          ${covers.threeD ? `<button class="${offline ? "ghost" : "copy-btn"}" id="copyDetailThree" type="button">复制立封</button>` : ""}
+          ${covers.flat ? `<button class="copy-btn" id="copyDetailFlat" type="button">复制书封</button>` : ""}
+          ${covers.threeD ? `<button class="copy-btn" id="copyDetailThree" type="button">复制立封</button>` : ""}
           ${covers.flat ? `<button class="ghost" id="copyDetailLink" type="button">复制图片链接</button>` : ""}
         </div>
         ${speakerNote}
         ${fullNote ? `<div class="note full-note"><strong>备注</strong><p>${escapeHtml(fullNote)}</p></div>` : ""}
-        ${offlineNote}
-        ${manualMissingNote}
-        ${mismatchNote}
       </div>
     </div>
   `;
-  $("#copyDetailFlat")?.addEventListener("click", event => copyCoverFromResult(result, covers.flat, "平封", event.currentTarget));
+  $("#copyDetailFlat")?.addEventListener("click", event => copyCoverFromResult(result, covers.flat, "书封", event.currentTarget));
   $("#copyDetailThree")?.addEventListener("click", event => copyCoverFromResult(result, covers.threeD, "立封", event.currentTarget));
   $("#copyDetailLink")?.addEventListener("click", async event => {
-    if (result.status === "offline" && !confirm("这本书已在平台下架，确定仍要复制封面吗？")) return;
     await copyText(absoluteAssetUrl(covers.flat));
     flashCopyButton(event.currentTarget, "已复制链接");
   });
@@ -997,15 +964,14 @@ function renderManageList() {
     row.type = "button";
     row.className = `book-row ${book.id === selectedBookId ? "active" : ""}`;
     const covers = displayCovers(book);
-    const offline = isOffline(book);
     const noteBadge = noteBadgeText(book);
     const speakerMeta = isAllSpeaker() ? `${bookSpeakerName(book)} · ` : "";
     const thumb = covers.flat ? `<img ${imageAttrs(covers.flat, "")}>` : `<div class="thumb-placeholder">无图</div>`;
     row.innerHTML = `
         ${thumb}
         <span>
-          <strong>${escapeHtml(book.title)}${offline ? `<em class="status-pill offline">已下架</em>` : `<em class="status-pill active">正常</em>`}</strong>
-          <small>${escapeHtml(speakerMeta)}${versionLabels[covers.version]} · ${covers.threeD ? "有立体封" : "无立体封"}${noteBadge ? ` · ${escapeHtml(noteBadge)}` : ""}</small>
+          <strong>${escapeHtml(book.title)}</strong>
+          <small>${escapeHtml(speakerMeta)}${versionLabels[covers.version]} · ${covers.threeD ? "有立封" : "无立封"}${noteBadge ? ` · ${escapeHtml(noteBadge)}` : ""}</small>
         </span>
       `;
     row.addEventListener("click", () => {
@@ -1031,10 +997,8 @@ function openBookEditor(book, presetTitle = "", speakerOverride = null) {
   $("#bookId").value = book ? book.id : "";
   $("#bookTitle").value = book ? book.title : presetTitle;
   setEditingSpeaker(speaker);
-  $("#bookStatus").value = bookStatus(book);
-  updateCustomSelect($("#bookStatus"));
+  $("#bookStatus").value = book?.status || "active";
   $("#bookNote").value = bookNote(book);
-  $("#preferredVersion").value = normalizePreferredVersion(book?.preferredVersion || "auto");
   $("#deleteBook").style.visibility = book ? "visible" : "hidden";
   fillUploadSlots(book || { covers: emptyCovers() });
   updateActualVersionPreview();
@@ -1052,9 +1016,7 @@ function resetEditor() {
   setEditingSpeaker(null);
   $("#bookId").value = "";
   $("#bookStatus").value = "active";
-  updateCustomSelect($("#bookStatus"));
   $("#bookNote").value = "";
-  $("#preferredVersion").value = "auto";
   $("#deleteBook").style.visibility = "hidden";
   fillUploadSlots({ covers: emptyCovers() });
   updateActualVersionPreview();
@@ -1063,11 +1025,10 @@ function resetEditor() {
 }
 
 function fillUploadSlots(book) {
-  const covers = { ...emptyCovers(), ...(book.covers || {}) };
+  const covers = normalizedCovers(book);
   const values = {
-    custom_flat: covers.custom?.flat || "",
-    original_flat: covers.original?.flat || "",
-    original_3d: covers.original?.threeD || "",
+    cover: covers.cover || "",
+    standing: covers.standing || "",
   };
   $$(".upload-slot").forEach(slot => {
     const key = slot.dataset.slot;
@@ -1089,8 +1050,8 @@ function fillUploadSlots(book) {
 
 function collectBookFromForm() {
   const covers = emptyCovers();
-  for (const [key, [version, slot]] of Object.entries(slotMap())) {
-    covers[version][slot] = getSlotValue(key);
+  for (const [key, field] of Object.entries(slotMap())) {
+    covers[field] = getSlotValue(key);
   }
   const selectedSpeakerId = $("#bookSpeaker").value;
   const speaker = speakers.find(item => item.id === selectedSpeakerId) || editingSpeaker;
@@ -1101,7 +1062,6 @@ function collectBookFromForm() {
     title: $("#bookTitle").value.trim(),
     note: $("#bookNote").value.trim(),
     status: $("#bookStatus").value,
-    preferredVersion: normalizePreferredVersion($("#preferredVersion").value),
     covers,
   };
 }
@@ -1112,8 +1072,8 @@ function getSlotValue(key) {
 
 function updateActualVersionPreview() {
   const book = collectBookFromForm();
-  for (const [key, [version, slot]] of Object.entries(slotMap())) {
-    if (uploadState[key]) book.covers[version][slot] = "__pending_upload__";
+  for (const [key, field] of Object.entries(slotMap())) {
+    if (uploadState[key]) book.covers[field] = "__pending_upload__";
   }
   const version = actualVersion(book);
   updateUploadSlotStates(book, version);
@@ -1147,35 +1107,11 @@ function clearSlotImageError(slot) {
 }
 
 function updateUploadSlotStates(book, version) {
-  const preferred = normalizePreferredVersion(book.preferredVersion || "auto");
-  const covers = book.covers || emptyCovers();
-  const hasCustom = Boolean(covers.custom?.flat);
-  const hasOriginal = Boolean(covers.original?.flat);
-  const hasOriginal3d = Boolean(covers.original?.threeD);
-
-  if (!hasCustom) {
-    setSlotState("custom_flat", "缺失", { missing: true });
-  } else if (version === "custom") {
-    setSlotState("custom_flat", "✓ 展示中", { current: true });
-  } else {
-    setSlotState("custom_flat", "备用", { standby: true, canSet: true });
-  }
-
-  if (!hasOriginal) {
-    setSlotState("original_flat", "缺失", { missing: true });
-  } else if (version === "original") {
-    setSlotState("original_flat", "✓ 展示中", { current: true });
-  } else {
-    setSlotState("original_flat", "备用", { standby: true, canSet: true });
-  }
-
-  if (!hasOriginal3d) {
-    setSlotState("original_3d", "缺失", { missing: true });
-  } else if (version === "original") {
-    setSlotState("original_3d", "跟随展示", { current: true });
-  } else {
-    setSlotState("original_3d", "备用", { standby: true });
-  }
+  const covers = normalizedCovers(book);
+  const hasCover = Boolean(covers.cover);
+  const hasStanding = Boolean(covers.standing);
+  setSlotState("cover", hasCover ? "✓ 已上传" : "缺失", hasCover ? { current: true } : { missing: true });
+  setSlotState("standing", hasStanding ? "✓ 已上传" : "缺失", hasStanding ? { standby: true } : { missing: true });
 }
 
 async function fileToDataUrl(file) {
@@ -1225,7 +1161,7 @@ async function saveBook(event) {
     if (pendingReturnTitle) {
       const index = currentResults.findIndex(result => normalize(result.inputTitle) === normalize(pendingReturnTitle));
       if (index >= 0) {
-        currentResults[index] = { inputTitle: pendingReturnTitle, status: isOffline(saved) ? "offline" : "matched", book: saved, candidates: [{ book: saved, score: 1 }] };
+        currentResults[index] = { inputTitle: pendingReturnTitle, status: "matched", book: saved, candidates: [{ book: saved, score: 1 }] };
         renderResults();
         $$(".tab").find(tab => tab.dataset.view === "search").click();
       }
@@ -1423,13 +1359,8 @@ function bindEvents() {
   $("#bookForm").noValidate = true;
   $("#bookForm").addEventListener("submit", saveBook);
   initCustomSelect($("#bookSpeaker"));
-  initCustomSelect($("#bookStatus"));
   initCustomSelect($("#speakerDialogSelect"));
   $("#deleteBook").addEventListener("click", deleteCurrentBook);
-  $("#bookStatus").addEventListener("change", () => {
-    markDirty();
-    updateActualVersionPreview();
-  });
   $("#bookSpeaker").addEventListener("change", event => {
     const speaker = speakers.find(item => item.id === event.target.value);
     setEditingSpeaker(speaker || null);
@@ -1511,15 +1442,6 @@ function bindEvents() {
       markDirty();
       updateActualVersionPreview();
     });
-    if (setDisplayButton) {
-      setDisplayButton.addEventListener("click", () => {
-        const [version] = slotMap()[key] || [];
-        if (!version) return;
-        $("#preferredVersion").value = version;
-        markDirty();
-        updateActualVersionPreview();
-      });
-    }
     zone.addEventListener("dragover", event => {
       event.preventDefault();
       zone.classList.add("dragging");
