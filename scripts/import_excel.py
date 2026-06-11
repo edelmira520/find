@@ -13,11 +13,10 @@ SHEET_NAME = "樊登读书APP每周书籍"
 TITLE_COL = 3
 STATUS_COL = 13
 COVER_COLUMNS = {
-    11: ("custom", "flat", "custom_flat"),
-    9: ("original", "flat", "original_flat"),
-    10: ("original", "threeD", "original_3d"),
+    9: ("cover", "书封"),
+    10: ("standing", "立封"),
 }
-OFFLINE_KEYWORDS = ["下线", "下架", "已下", "停用", "不可用"]
+REMOVED_STATUSES = {"下架", "已下架", "停售", "不上架", "停用", "removed", "discontinued", "inactive", "offline"}
 DEFAULT_SPEAKER_ID = "fandeng"
 DEFAULT_SPEAKER_NAME = "樊登"
 
@@ -42,13 +41,12 @@ def clean_title(value):
     return re.sub(r"\s+", " ", title).strip()
 
 
-def resolve_status(value):
-    text = clean_text(value)
-    return "offline" if any(keyword in text for keyword in OFFLINE_KEYWORDS) else "active"
+def normalize_status(value):
+    return clean_text(value).lower()
 
 
-def default_preferred_version():
-    return "auto"
+def should_keep_status(value):
+    return normalize_status(value) not in REMOVED_STATUSES
 
 
 def slug_id(index):
@@ -106,14 +104,7 @@ def write_image(image, output_path):
 
 def resolve_actual_version(book):
     covers = book["covers"]
-    preferred = book.get("preferredVersion", "auto")
-    if preferred in ["custom", "original"]:
-        return preferred if covers[preferred]["flat"] else "noCover"
-    if covers["custom"]["flat"]:
-        return "custom"
-    if covers["original"]["flat"]:
-        return "original"
-    return "noCover"
+    return "cover" if covers.get("cover") else "noCover"
 
 
 def rel_img(path):
@@ -124,13 +115,11 @@ def rel_img(path):
 
 def preview_card(book, duplicate_titles):
     actual = resolve_actual_version(book)
-    status = book.get("status", "active")
     covers = book["covers"]
     cells = []
     columns = [
-        ("自制平封", covers["custom"]["flat"]),
-        ("原版平封", covers["original"]["flat"]),
-        ("原版立封", covers["original"]["threeD"]),
+        ("书封", covers.get("cover", "")),
+        ("立封", covers.get("standing", "")),
     ]
     for label, path in columns:
         if path:
@@ -146,14 +135,12 @@ def preview_card(book, duplicate_titles):
         filters.append("missing")
     if duplicate:
         filters.append("duplicate")
-    if status == "offline":
-        filters.append("offline")
 
     return f"""
     <article class="book-card {html.escape(actual)}" data-filters="{' '.join(filters)}">
       <header>
         <h2>{html.escape(book["title"])}{duplicate_badge}</h2>
-        <span class="actual">当前实际展示：{version_label(actual)} · {"已下架" if status == "offline" else "正常"}</span>
+        <span class="actual">当前展示：{version_label(actual)}</span>
       </header>
       <div class="covers">{''.join(cells)}</div>
     </article>
@@ -162,8 +149,7 @@ def preview_card(book, duplicate_titles):
 
 def version_label(version):
     return {
-        "custom": "自制版",
-        "original": "原版",
+        "cover": "书封",
         "noCover": "缺封面",
     }.get(version, version)
 
@@ -254,7 +240,7 @@ def build_preview_html(books, report):
     }}
     .covers {{
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, 1fr);
       gap: 10px;
     }}
     .cover-cell {{
@@ -295,8 +281,7 @@ def build_preview_html(books, report):
       font-size: 12px;
       vertical-align: middle;
     }}
-    .custom {{ border-left: 4px solid #0f766e; }}
-    .original {{ border-left: 4px solid #2563eb; }}
+    .cover {{ border-left: 4px solid #0f766e; }}
     .noCover {{ border-left: 4px solid #b42318; }}
     .book-card.hidden {{ display: none; }}
   </style>
@@ -308,9 +293,7 @@ def build_preview_html(books, report):
     <button class="active" data-filter="all">全部</button>
     <button data-filter="missing">缺封面</button>
     <button data-filter="duplicate">重复书名</button>
-    <button data-filter="offline">已下架</button>
-    <button data-filter="custom">自制版</button>
-    <button data-filter="original">原版</button>
+    <button data-filter="cover">书封</button>
   </div>
   <main class="grid">{cards}</main>
   <script>
@@ -363,6 +346,7 @@ def convert(excel_path, output_dir, speaker_id=DEFAULT_SPEAKER_ID, speaker_name=
     row_reports = []
     blank_title_rows = []
     skipped_empty_rows = []
+    removed_status_rows = []
     today = date.today().isoformat()
 
     for row in range(2, worksheet.max_row + 1):
@@ -375,19 +359,22 @@ def convert(excel_path, output_dir, speaker_id=DEFAULT_SPEAKER_ID, speaker_name=
                 skipped_empty_rows.append(row)
             continue
 
-        book_id = slug_id(len(books) + 1)
         note = clean_text(worksheet.cell(row, STATUS_COL).value)
+        if not should_keep_status(note):
+            removed_status_rows.append(row)
+            continue
+
+        book_id = slug_id(len(books) + 1)
         book = {
             "id": book_id,
             "title": title,
             "speakerId": speaker_id,
             "speakerName": speaker_name,
             "note": note,
-            "status": resolve_status(note),
-            "preferredVersion": default_preferred_version(),
+            "status": "active",
             "covers": {
-                "custom": {"flat": "", "threeD": ""},
-                "original": {"flat": "", "threeD": ""},
+                "cover": "",
+                "standing": "",
             },
             "createdAt": today,
             "updatedAt": today,
@@ -395,7 +382,7 @@ def convert(excel_path, output_dir, speaker_id=DEFAULT_SPEAKER_ID, speaker_name=
 
         extracted = {}
         multiple_images = []
-        for col, (version, slot, suffix) in COVER_COLUMNS.items():
+        for col, (slot, label) in COVER_COLUMNS.items():
             images = images_by_cell.get((row, col), [])
             if not images:
                 continue
@@ -403,11 +390,11 @@ def convert(excel_path, output_dir, speaker_id=DEFAULT_SPEAKER_ID, speaker_name=
                 multiple_images.append({"column": col, "count": len(images)})
             image = images[0]
             extension = image_extension(image)
-            filename = f"{book_id}_{suffix}{extension}"
+            filename = f"{book_id}_{slot}{extension}"
             output_path = covers_dir / filename
             write_image(image, output_path)
-            book["covers"][version][slot] = rel_img(f"covers/{filename}")
-            extracted[f"{version}.{slot}"] = rel_img(f"covers/{filename}")
+            book["covers"][slot] = rel_img(f"covers/{filename}")
+            extracted[slot] = rel_img(f"covers/{filename}")
 
         books.append(book)
         row_reports.append({
@@ -433,7 +420,6 @@ def convert(excel_path, output_dir, speaker_id=DEFAULT_SPEAKER_ID, speaker_name=
         if resolve_actual_version(book) == "noCover"
     ]
     actual_counts = Counter(resolve_actual_version(book) for book in books)
-    offline_count = sum(1 for book in books if book.get("status", "active") == "offline")
 
     report = {
         "summary": {
@@ -444,22 +430,21 @@ def convert(excel_path, output_dir, speaker_id=DEFAULT_SPEAKER_ID, speaker_name=
             "generatedAt": today,
             "columnMapping": {
                 "title": "C列：书籍名称",
-                "covers.custom.flat": "K列：自制书封（平封）",
-                "covers.original.flat": "I列：原版书封（平封）",
-                "covers.original.threeD": "J列：原版书封（立体封）",
-                "status": "M列：备注（含下线/下架/已下/停用/不可用 => offline）",
+                "cover": "I列：书封",
+                "standing": "J列：立封",
                 "note": "M列：备注",
             },
             "importedCount": len(books),
             "missingCoverCount": len(missing_covers),
             "duplicateTitleCount": len(duplicate_titles),
-            "offlineCount": offline_count,
+            "removedStatusRowCount": len(removed_status_rows),
             "skippedEmptyRowCount": len(skipped_empty_rows),
             "blankTitleWithContentRowCount": len(blank_title_rows),
             "actualVersionCounts": dict(actual_counts),
         },
         "blankTitleRows": blank_title_rows,
         "skippedEmptyRows": skipped_empty_rows,
+        "removedStatusRows": removed_status_rows,
         "duplicateTitles": duplicate_titles,
         "missingCovers": missing_covers,
         "ignoredImages": ignored_images,

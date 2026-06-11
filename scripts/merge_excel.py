@@ -14,12 +14,11 @@ SHEET_NAME = "樊登读书APP每周书籍"
 TITLE_COL = 3
 STATUS_COL = 13
 COVER_COLUMNS = {
-    11: ("custom", "flat", "custom_flat", "自制平封"),
-    9: ("original", "flat", "original_flat", "原版平封"),
-    10: ("original", "threeD", "original_3d", "原版立封"),
+    9: ("cover", "书封"),
+    10: ("standing", "立封"),
 }
-ACTION_KEYS = ["add", "fill", "conflict", "offline_conflict", "duplicate_conflict", "note_conflict", "skip"]
-OFFLINE_KEYWORDS = ["下线", "下架", "已下", "停用", "不可用"]
+ACTION_KEYS = ["add", "fill", "conflict", "duplicate_conflict", "note_conflict", "skip"]
+REMOVED_STATUSES = {"下架", "已下架", "停售", "不上架", "停用", "removed", "discontinued", "inactive", "offline"}
 DEFAULT_SPEAKER_ID = "fandeng"
 DEFAULT_SPEAKER_NAME = "樊登"
 
@@ -60,13 +59,16 @@ def clean_title(value):
     return re.sub(r"\s+", " ", title).strip()
 
 
-def resolve_status(value):
-    text = clean_text(value)
-    return "offline" if any(keyword in text for keyword in OFFLINE_KEYWORDS) else "active"
+def normalize_status(value):
+    return clean_text(value).lower()
 
 
-def default_preferred_version():
-    return "auto"
+def should_keep_status(value):
+    return normalize_status(value) not in REMOVED_STATUSES
+
+
+def should_keep_book(book):
+    return should_keep_status(book.get("status", ""))
 
 
 def normalize_title(value):
@@ -75,8 +77,8 @@ def normalize_title(value):
 
 def empty_covers():
     return {
-        "custom": {"flat": "", "threeD": ""},
-        "original": {"flat": "", "threeD": ""},
+        "cover": "",
+        "standing": "",
     }
 
 
@@ -149,21 +151,26 @@ def next_book_id(books):
 
 
 def set_cover(covers, slot_key, value):
-    version, slot, _, _ = next(item for item in COVER_COLUMNS.values() if item[2] == slot_key)
-    covers[version][slot] = value
+    covers[slot_key] = value
 
 
 def get_cover(covers, slot_key):
-    version, slot, _, _ = next(item for item in COVER_COLUMNS.values() if item[2] == slot_key)
-    return (covers or empty_covers()).get(version, {}).get(slot, "")
+    covers = covers or empty_covers()
+    if slot_key in covers:
+        return covers.get(slot_key, "")
+    if slot_key == "cover":
+        return covers.get("original", {}).get("flat", "")
+    if slot_key == "standing":
+        return covers.get("original", {}).get("threeD", "")
+    return ""
 
 
 def cover_slots():
-    return [value[2] for value in COVER_COLUMNS.values()]
+    return [value[0] for value in COVER_COLUMNS.values()]
 
 
 def cover_label(slot_key):
-    return next(value[3] for value in COVER_COLUMNS.values() if value[2] == slot_key)
+    return next(value[1] for value in COVER_COLUMNS.values() if value[0] == slot_key)
 
 
 def rel_path(path, base):
@@ -193,6 +200,7 @@ def read_excel_rows(excel_path, run_dir, data_dir, speaker_id, speaker_name):
     incoming_dir = run_dir / "incoming-covers"
     rows = []
     missing_title = 0
+    removed_status = 0
     for row_index in range(2, worksheet.max_row + 1):
         title = clean_title(worksheet.cell(row_index, TITLE_COL).value)
         if not title:
@@ -201,9 +209,14 @@ def read_excel_rows(excel_path, run_dir, data_dir, speaker_id, speaker_name):
                 missing_title += 1
             continue
 
+        note = clean_text(worksheet.cell(row_index, STATUS_COL).value)
+        if not should_keep_status(note):
+            removed_status += 1
+            continue
+
         covers = empty_covers()
         incoming = {}
-        for col, (version, slot, slot_key, _) in COVER_COLUMNS.items():
+        for col, (slot_key, _) in COVER_COLUMNS.items():
             images = images_by_cell.get((row_index, col), [])
             if not images:
                 continue
@@ -212,18 +225,16 @@ def read_excel_rows(excel_path, run_dir, data_dir, speaker_id, speaker_name):
             output_path = incoming_dir / filename
             write_image(image, output_path)
             preview_path = rel_path(output_path, data_dir)
-            covers[version][slot] = preview_path
+            covers[slot_key] = preview_path
             incoming[slot_key] = preview_path
 
-        note = clean_text(worksheet.cell(row_index, STATUS_COL).value)
         rows.append({
             "row": row_index,
             "title": title,
             "speakerId": speaker_id,
             "speakerName": speaker_name,
             "note": note,
-            "status": resolve_status(note),
-            "preferredVersion": default_preferred_version(),
+            "status": "active",
             "normalizedTitle": normalize_title(title),
             "covers": covers,
             "incoming": incoming,
@@ -236,6 +247,7 @@ def read_excel_rows(excel_path, run_dir, data_dir, speaker_id, speaker_name):
         "sheetWarning": sheet_warning,
         "ignoredImages": ignored_images,
         "missingTitle": missing_title,
+        "removedStatus": removed_status,
     }
 
 
@@ -249,10 +261,7 @@ def index_books(books, speaker_id):
 
 
 def choose_existing(matches):
-    active = [book for book in matches if book.get("status", "active") != "offline"]
-    if len(active) == 1:
-        return active[0]
-    if not active and len(matches) == 1:
+    if len(matches) == 1:
         return matches[0]
     return None
 
@@ -273,9 +282,6 @@ def classify_row(row, existing_groups, duplicate_new_keys, duplicate_existing_ke
     existing = choose_existing(matches)
     if not existing:
         return "duplicate_conflict", None, "匹配到多条旧记录，需要人工确认", [], []
-
-    if existing.get("status", "active") == "offline":
-        return "offline_conflict", existing, "资料库中此书已下架，不能自动恢复", [], new_slots
 
     old_note = clean_text(existing.get("note", ""))
     new_note = clean_text(row.get("note", ""))
@@ -320,7 +326,6 @@ def build_plan(excel_rows, books, speaker_id):
             "newSpeakerName": row.get("speakerName", DEFAULT_SPEAKER_NAME),
             "newStatus": row.get("status", "active"),
             "newNote": row.get("note", ""),
-            "newPreferredVersion": row.get("preferredVersion", "auto"),
             "normalizedTitle": row["normalizedTitle"],
             "newCovers": row["covers"],
             "newCoverSlots": [slot for slot in cover_slots() if get_cover(row["covers"], slot)],
@@ -341,17 +346,15 @@ def summarize(plan, excel_info):
         "add": 0,
         "fill": 0,
         "conflict": 0,
-        "offlineConflict": 0,
         "duplicateConflict": 0,
         "noteConflict": 0,
         "skip": 0,
         "missingTitle": excel_info["missingTitle"],
         "missingCover": sum(1 for row in excel_info["rows"] if row["missingCover"]),
+        "removedStatus": excel_info.get("removedStatus", 0),
     }
     for item in plan:
-        if item["action"] == "offline_conflict":
-            summary["offlineConflict"] += 1
-        elif item["action"] == "duplicate_conflict":
+        if item["action"] == "duplicate_conflict":
             summary["duplicateConflict"] += 1
         elif item["action"] == "note_conflict":
             summary["noteConflict"] += 1
@@ -386,8 +389,6 @@ def build_preview_html(summary, plan, run_dir):
         action = item["action"]
         reason = item["reason"]
         old_title = item["existingTitle"] or "无"
-        new_status = "已下架" if item.get("newStatus") == "offline" else "正常"
-        old_status = "已下架" if item.get("existingStatus") == "offline" else "正常" if item.get("existingTitle") else "无"
         new_note = item.get("newNote") or "无"
         old_note = item.get("existingNote") or "无"
         rows.append(f"""
@@ -395,7 +396,7 @@ def build_preview_html(summary, plan, run_dir):
           <header>
             <div>
               <h2>{html.escape(item["newTitle"])}</h2>
-              <p>新表状态：{new_status} · 匹配旧书：{html.escape(old_title)} · 旧状态：{old_status}</p>
+              <p>匹配旧书：{html.escape(old_title)}</p>
             </div>
             <strong>{html.escape(action)}</strong>
           </header>
@@ -436,7 +437,6 @@ def build_preview_html(summary, plan, run_dir):
     .merge-card.add {{ border-left-color: #087443; }}
     .merge-card.fill {{ border-left-color: #116a5b; }}
     .merge-card.conflict {{ border-left-color: #b7791f; }}
-    .merge-card.offline_conflict {{ border-left-color: #b42318; background: #fff7f5; }}
     .merge-card.duplicate_conflict {{ border-left-color: #7f56d9; }}
     .merge-card.note_conflict {{ border-left-color: #d97706; background: #fffaf0; }}
     .merge-card.skip {{ border-left-color: #8b7f70; opacity: 0.78; }}
@@ -450,11 +450,10 @@ def build_preview_html(summary, plan, run_dir):
     .notes div {{ background: #f7f1e8; border-radius: 7px; padding: 9px; }}
     .notes b {{ display: block; margin-bottom: 4px; }}
     .notes p {{ margin: 0; white-space: pre-wrap; color: #5d5449; }}
-    .offline_conflict .reason {{ color: #b42318; font-weight: 700; }}
     .compare {{ display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }}
     section {{ min-width: 0; }}
     section h3 {{ font-size: 15px; margin-bottom: 8px; }}
-    .covers {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }}
+    .covers {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }}
     .cover-cell span {{ display: block; color: #746f66; font-size: 12px; margin-bottom: 5px; }}
     img, .missing {{ width: 100%; aspect-ratio: 2 / 3; object-fit: contain; background: #f5ecdf; border: 1px solid #e2d8ca; border-radius: 6px; }}
     .missing {{ display: grid; place-items: center; color: #9a8d7b; border-style: dashed; font-size: 12px; }}
@@ -514,7 +513,6 @@ def apply_plan(plan, books, data_dir):
                 "speakerName": item.get("newSpeakerName", DEFAULT_SPEAKER_NAME),
                 "note": item.get("newNote", ""),
                 "status": item.get("newStatus", "active"),
-                "preferredVersion": item.get("newPreferredVersion", "auto"),
                 "covers": covers,
                 "createdAt": now,
                 "updatedAt": now,
@@ -554,7 +552,7 @@ def run_merge(excel_path, data_dir, apply=False, speaker_id=DEFAULT_SPEAKER_ID, 
     speaker_id, speaker_name = normalize_speaker_args(speaker_id, speaker_name)
     ensure_speaker(data_dir, speaker_id, speaker_name)
     books_path = data_dir / "books.json"
-    books = json.loads(books_path.read_text(encoding="utf-8")) if books_path.exists() else []
+    books = [book for book in (json.loads(books_path.read_text(encoding="utf-8")) if books_path.exists() else []) if should_keep_book(book)]
     run_dir = create_run_dir(data_dir)
 
     excel_info = read_excel_rows(excel_path, run_dir, data_dir, speaker_id, speaker_name)
@@ -573,7 +571,7 @@ def run_merge(excel_path, data_dir, apply=False, speaker_id=DEFAULT_SPEAKER_ID, 
         (run_dir / "apply-report.json").write_text(json.dumps(apply_report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"Excel rows: {summary['newExcelRows']}")
-    print(f"add: {summary['add']}, fill: {summary['fill']}, conflict: {summary['conflict']}, offline_conflict: {summary['offlineConflict']}, duplicate_conflict: {summary['duplicateConflict']}, skip: {summary['skip']}")
+    print(f"add: {summary['add']}, fill: {summary['fill']}, conflict: {summary['conflict']}, duplicate_conflict: {summary['duplicateConflict']}, skip: {summary['skip']}")
     print(f"Report: {run_dir}")
     if apply_report:
         print(f"Applied add: {apply_report['add']}, fill: {apply_report['fill']}, skipped: {apply_report['skipped']}")
